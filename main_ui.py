@@ -139,6 +139,34 @@ class LabeledSlider(QWidget):
         self.slider.setValue(self._to_tick(v))
         self.edit.setText(self._fmt(v))
 
+    def setMaxValue(self, new_vmax):
+        """Update the upper bound at runtime.
+
+        Recomputes the tick count for the new range, refreshes the max range
+        label, and clamps the current value down if it now sits outside the
+        boundary. The fixed `step` (and therefore the scaling logic) is
+        preserved, so existing tick<->value conversions stay valid.
+        """
+        current = self.value()
+        self._vmax = new_vmax
+        self._ticks = int(round((new_vmax - self._vmin) / self._step))
+
+        # Resizing the range can auto-clamp the slider; suppress the resulting
+        # signal churn while we reconcile state, then restore the position.
+        self.slider.blockSignals(True)
+        self.slider.setMaximum(self._ticks)
+        self.slider.setValue(self._to_tick(min(current, new_vmax)))
+        self.slider.blockSignals(False)
+
+        self._max_lbl.setText(self._fmt(new_vmax))
+
+        if current > new_vmax:
+            # Position fell outside the shrunken room -> clamp + notify listeners.
+            self.edit.setText(self._fmt(new_vmax))
+            self.valueChanged.emit(new_vmax)
+        else:
+            self.edit.setText(self._fmt(current))
+
     def _on_slider(self, tick):
         # Slider drag -> mirror into edit, then notify listeners with real value.
         self.edit.setText(self._fmt(self._to_value(tick)))
@@ -208,8 +236,9 @@ class MainWindow(QMainWindow):
         root.addWidget(self._build_center())
         root.addWidget(self._build_right())
 
-        # Populate the room-modes table with the startup defaults. Must run
-        # after _build_right() has created self.modes_table.
+        # Constrain position sliders to the default room, then populate the
+        # room-modes table. Both must run after the panels exist.
+        self._sync_position_limits()
         self.update_room_modes()
 
     # ------------------------------------------------------------------
@@ -263,6 +292,12 @@ class MainWindow(QMainWindow):
         self.room.y.valueChanged.connect(self.update_room_modes)
         self.room.z.valueChanged.connect(self.update_room_modes)
 
+        # Constrain speaker/mic positions to the room: each room axis caps the
+        # matching axis on Speaker 1, Speaker 2 and Mic (and clamps if needed).
+        self.room.x.valueChanged.connect(lambda v: self._limit_axis("x", v))
+        self.room.y.valueChanged.connect(lambda v: self._limit_axis("y", v))
+        self.room.z.valueChanged.connect(lambda v: self._limit_axis("z", v))
+
         # --- Speaker 1 -----------------------------------------------
         spk_ranges = {"X": (0.0, D.ROOM_MAX_L_XY), "Y": (0.0, D.ROOM_MAX_L_XY), "Z": (0.0, D.ROOM_MAX_L_Z)}
         spk1_defaults = {"X": D.SPK_X, "Y": D.SPK_Y, "Z": D.SPK_Z}
@@ -297,6 +332,21 @@ class MainWindow(QMainWindow):
         two_sources = self.source_combo.currentText() == "2"
         self.spk2.setEnabled(two_sources)
         self.symmetry_chk.setEnabled(two_sources)
+
+    # ------------------------------------------------------------------
+    # CONTROLLER: room <-> position constraints
+    # ------------------------------------------------------------------
+    def _limit_axis(self, axis, new_max):
+        """Cap the given axis ('x'/'y'/'z') of every position group to the
+        current room dimension, clamping any position now out of bounds."""
+        for grp in (self.spk1, self.spk2, self.mic):
+            getattr(grp, axis).setMaxValue(new_max)
+
+    def _sync_position_limits(self):
+        """Apply all three room dimensions as position-slider maxima (startup)."""
+        self._limit_axis("x", self.room.x.value())
+        self._limit_axis("y", self.room.y.value())
+        self._limit_axis("z", self.room.z.value())
 
     # ------------------------------------------------------------------
     # CONTROLLER: room modes
