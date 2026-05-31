@@ -28,8 +28,9 @@ from PySide6.QtWidgets import (
 import config as app_config
 import physics
 
-# View layer (3D)
+# View layer (3D + 2D)
 import render
+from graphs import Plot2DWidget
 
 # ---------------------------------------------------------------------------
 # Global dimensions (px)
@@ -61,11 +62,17 @@ class LabeledSlider(QWidget):
     Slider works on integer ticks internally; `step` maps ticks to real
     values (e.g. 0.01 m or 0.1 reflection coefficient).
 
-    Emits `valueChanged(float)` (the real, unscaled value) whenever the slider
-    is dragged or a valid number is committed in the line edit.
+    Emits `valueChanged(float)` (the real, unscaled value) continuously while
+    the slider is dragged or a number is committed in the line edit -- use this
+    for lightweight live UI updates.
+
+    Emits `committed(float)` only when the user *finishes* an interaction
+    (releases the slider handle, or commits the line edit) -- use this to
+    trigger heavy recomputation exactly once per gesture.
     """
 
     valueChanged = Signal(float)
+    committed = Signal(float)
 
     def __init__(self, label, vmin, vmax, step, value=None, parent=None):
         super().__init__(parent)
@@ -118,6 +125,10 @@ class LabeledSlider(QWidget):
         # Keep slider <-> edit in sync
         self.slider.valueChanged.connect(self._on_slider)
         self.edit.editingFinished.connect(self._on_edit)
+        # Heavy-update trigger: only when the drag gesture finishes.
+        self.slider.sliderReleased.connect(
+            lambda: self.committed.emit(self.value())
+        )
 
     # -- helpers ---------------------------------------------------------
     def _fmt(self, v):
@@ -190,6 +201,8 @@ class LabeledSlider(QWidget):
         else:
             self.slider.setValue(new_tick)  # triggers _on_slider -> emits
             self.edit.setText(self._fmt(v))
+        # Committing the line edit is a finished gesture -> heavy update.
+        self.committed.emit(v)
 
 
 class XYZSliders(QGroupBox):
@@ -244,9 +257,9 @@ class MainWindow(QMainWindow):
         self._sync_position_limits()
         self.update_room_modes()
 
-        # Wire up the 3D view signals and draw the initial field.
+        # Wire up the 3D view signals and draw the initial field + 2D plots.
         self._wire_3d_signals()
-        self.update_3d_view()
+        self._refresh(recompute_response=True)
 
     # ------------------------------------------------------------------
     # LEFT PANEL
@@ -452,40 +465,74 @@ class MainWindow(QMainWindow):
             return "Global Cancel"
         return "Uncorrelated"
 
-    def update_3d_view(self, *_):
-        """Recompute the spatial tensor for the current state and push it to the
-        3D view (in place). Wired so it can accept a slider's float argument."""
+    def _refresh(self, recompute_response):
+        """Refresh the 3D field and the 2D plots from the current UI state.
+
+        The 3D volume always recomputes (it shows the field at the selected
+        frequency). For the 2D plots, ``recompute_response`` controls whether the
+        expensive 1D frequency-response curve is recomputed (geometry change) or
+        only the marker line is moved (frequency change) -- the curve itself is
+        frequency-independent.
+        """
+        room = self._current_room()
+        spk1 = self._pos(self.spk1)
+        spk2 = self._pos(self.spk2)
+        mic = self._pos(self.mic)
         num_src = 2 if self.source_combo.currentText() == "2" else 1
-        self.render3d.update_mesh(
-            self._current_room(),
-            self._pos(self.spk1),
-            self._pos(self.spk2),
-            self._pos(self.mic),
-            num_src,
-            self._corr_mode(),
-            self.freq_slider.value(),
+        corr = self._corr_mode()
+        freq = self.freq_slider.value()
+
+        self.render3d.update_mesh(room, spk1, spk2, mic, num_src, corr, freq)
+        self.plot2d.update_all(
+            room, spk1, spk2, mic, num_src, corr, freq,
+            recompute_response=recompute_response,
         )
 
-    def _on_param_changed(self, *_):
-        """Geometry/source changes only refresh the 3D field when the
-        'Dynamic update' toggle is on; the frequency slider always refreshes."""
+    # ---- Frequency slider --------------------------------------------
+    def _on_freq_changed(self, *_):
+        """While the frequency slider moves: lightweight only -- slide the red
+        marker line on the response graph. The 3D field recompute waits for the
+        release (or runs live if Dynamic update is on)."""
+        self.plot2d.update_freq_marker(self.freq_slider.value())
         if self.dynamic_chk.isChecked():
-            self.update_3d_view()
+            self._refresh(recompute_response=False)
+
+    def _on_freq_committed(self, *_):
+        """Frequency slider released / value typed: recompute the 3D field once
+        (the 2D response curve is frequency-independent, so only its marker
+        moves)."""
+        self._refresh(recompute_response=False)
+
+    # ---- Geometry / source / walls -----------------------------------
+    def _on_param_changed(self, *_):
+        """Live recompute while dragging, but ONLY when Dynamic update is on."""
+        if self.dynamic_chk.isChecked():
+            self._refresh(recompute_response=True)
+
+    def _on_param_committed(self, *_):
+        """Slider released / value typed / combo changed: recompute the field
+        and the 2D response curve exactly once, regardless of the toggle."""
+        self._refresh(recompute_response=True)
 
     def _wire_3d_signals(self):
-        # Frequency always drives a recompute, regardless of the toggle.
-        self.freq_slider.valueChanged.connect(self.update_3d_view)
+        # Frequency: live marker on drag (+ optional live recompute), and a
+        # single heavy recompute when the gesture finishes.
+        self.freq_slider.valueChanged.connect(self._on_freq_changed)
+        self.freq_slider.committed.connect(self._on_freq_committed)
 
-        # Room + speaker/mic positions are gated by the Dynamic update toggle.
+        # Room + speaker/mic + wall sliders: live recompute only when Dynamic is
+        # on, but ALWAYS a single recompute when the gesture finishes.
         for grp in (self.room, self.spk1, self.spk2, self.mic):
             for axis in (grp.x, grp.y, grp.z):
                 axis.valueChanged.connect(self._on_param_changed)
-        self.source_combo.currentIndexChanged.connect(self._on_param_changed)
-        self.phase_combo.currentIndexChanged.connect(self._on_param_changed)
-
-        # Wall reflection coefficients also shape the field.
+                axis.committed.connect(self._on_param_committed)
         for slider in self.wall_sliders.values():
             slider.valueChanged.connect(self._on_param_changed)
+            slider.committed.connect(self._on_param_committed)
+
+        # Combos are discrete commits -> recompute immediately.
+        self.source_combo.currentIndexChanged.connect(self._on_param_committed)
+        self.phase_combo.currentIndexChanged.connect(self._on_param_committed)
 
     # ------------------------------------------------------------------
     # CENTER PANEL
@@ -497,10 +544,10 @@ class MainWindow(QMainWindow):
         lay.setContentsMargins(8, 8, 8, 8)
         lay.setSpacing(8)
 
-        # --- Top section (340 px) ------------------------------------
-        top = make_placeholder("Top-down view  |  Frequency response graph")
-        top.setFixedHeight(TOP_H - 16)
-        lay.addWidget(top)
+        # --- Top section (340 px): embedded Matplotlib 2D plots ------
+        self.plot2d = Plot2DWidget(panel)
+        self.plot2d.setFixedHeight(TOP_H - 16)
+        lay.addWidget(self.plot2d)
 
         # --- Bottom section (660 px) ---------------------------------
         bottom = QWidget()

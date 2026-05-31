@@ -73,6 +73,7 @@ class Render3D:
         # use ImageData, which the volume mapper renders directly (no resample),
         # guaranteeing that later in-place edits to `self.grid` show up on render.
         self.grid = self._make_grid(room)
+        self._last_spacing = self._spacing(room)   # for detecting room resizes
         seed = np.linspace(0.0, 1.0, self.grid.n_points, dtype=np.float32)
         self.grid.point_data[self.SCALARS] = seed
         self.grid.point_data.active_scalars_name = self.SCALARS
@@ -251,7 +252,11 @@ class Render3D:
         #    input IS self.grid (rebound in __init__), this reaches the volume;
         #    we still flag both the data and the mapper modified so VTK drops any
         #    cached bounding box and re-evaluates the new extent.
-        self.grid.spacing = self._spacing(room)
+        new_spacing = self._spacing(room)
+        room_resized = new_spacing != self._last_spacing
+        self._last_spacing = new_spacing
+
+        self.grid.spacing = new_spacing
         self.grid.Modified()
         self._vol_mapper.Modified()
         self._tune_opacity_distance(room)
@@ -276,7 +281,15 @@ class Render3D:
         if num_src == 2:
             self.spk2_marker.copy_from(self._sphere(spk2.x, spk2.y, spk2.z))
 
-        # 5. Re-render. No clear() / no re-add -> zoom, rotation, pan preserved.
+        # 5. Camera. Normally we DON'T touch it (so zoom/rotation/pan are
+        #    preserved across frequency / speaker changes). But when the room
+        #    size changes, refit so the (now larger/smaller) box stays in view.
+        #    reset_camera(bounds=...) recenters + steps back while preserving the
+        #    current view direction, so the user's rotation is kept.
+        if room_resized:
+            self.plotter.reset_camera(bounds=self.grid.bounds)
+
+        # 6. Re-render. No clear() / no re-add -> zoom, rotation, pan preserved.
         self.plotter.render()
 
     def close(self):
