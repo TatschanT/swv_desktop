@@ -36,12 +36,15 @@ BG_COLOR = "#101418"
 # Resolution (cells per side) of the checkerboard floor.
 FLOOR_RES = 8
 
-# Opacity transfer function across the (normalized) [0, 1] range. Low pressure
-# (nodes) stays see-through so you can look inside the room; high pressure
-# (anti-nodes) is FULLY opaque (1.0) so their color saturates and matches the
-# pure colors shown on the scalar bar instead of washing out against the
-# background. The mids are deliberately opaque enough to read their true hue.
-OPACITY_TF = [0.0, 0.1, 0.3, 0.6, 0.85, 1.0]
+# Opacity transfer function across the (normalized) [0, 1] range.
+# IMPORTANT: the lowest value keeps a fairly HIGH base opacity so the blue
+# (low-pressure) regions render as a real blue mist with saturated color,
+# instead of a near-transparent "black mist" that just shows the dark
+# background through jet's dark-navy low end. Without this floor the volume
+# reads as "black -> green -> red" rather than the full "blue -> green ->
+# yellow -> red" spectrum. High pressure (anti-nodes) stays fully opaque (1.0)
+# so reds saturate to match the scalar bar.
+OPACITY_TF = [0.3, 0.4, 0.55, 0.75, 1.0]
 
 # Print tensor min/max each update for debugging the data pipeline.
 DEBUG = False
@@ -74,10 +77,11 @@ class Render3D:
         self.grid.point_data[self.SCALARS] = seed
         self.grid.point_data.active_scalars_name = self.SCALARS
 
-        # ---- Volume + scalar bar (color gauge) --------------------------
-        # cmap + clim are identical to the scalar bar's, so the hues are mapped
-        # the same way in both; shade=False keeps colors at their true (unlit)
+        # ---- Volume (no scalar bar) -------------------------------------
+        # cmap="jet" + clim=[0,1]; shade=False keeps colors at their true (unlit)
         # value and linear interpolation (set below) avoids blocky washed cells.
+        # The scalar bar is intentionally omitted -- opacity blending made it
+        # read as a mismatch against the volume, so it was removed.
         self.vol_actor = self.plotter.add_volume(
             self.grid,
             scalars=self.SCALARS,
@@ -86,16 +90,7 @@ class Render3D:
             clim=[0.0, 1.0],            # data normalized to exactly [0, 1]
             shade=False,                # no lighting darkening -> colors stay true
             opacity_unit_distance=min(self._spacing(room)),
-            show_scalar_bar=True,
-            scalar_bar_args=dict(
-                title="Normalized Pressure",
-                vertical=True,
-                position_x=0.88, position_y=0.12,
-                width=0.08, height=0.76,
-                n_labels=5, fmt="%.1f",
-                title_font_size=16, label_font_size=12,
-                color="white",
-            ),
+            show_scalar_bar=False,
         )
         # Smooth (linear) sampling so colors blend cleanly instead of rendering
         # as washed-out nearest-neighbour blocks.

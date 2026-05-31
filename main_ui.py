@@ -328,17 +328,45 @@ class MainWindow(QMainWindow):
 
         lay.addStretch()
 
-        # Logic: enable/disable speaker 2 + symmetry based on source count
+        # Logic: enable/disable speaker 2 + symmetry based on source count.
         self.source_combo.currentIndexChanged.connect(self._update_source_state)
+        # Toggling the link re-locks/unlocks Speaker 2 and re-mirrors it.
+        self.symmetry_chk.toggled.connect(self._update_source_state)
+        # While linked, any Speaker 1 move (and a room-width change, since
+        # spk2.x = Lx - spk1.x) re-mirrors Speaker 2.
+        for axis in (self.spk1.x, self.spk1.y, self.spk1.z):
+            axis.valueChanged.connect(self._sync_symmetry)
+        self.room.x.valueChanged.connect(self._sync_symmetry)
+
         self._update_source_state()
 
         return panel
 
-    def _update_source_state(self):
-        """Grey out Speaker 2 sliders and L/R link when only 1 source."""
+    def _update_source_state(self, *_):
+        """Enable/disable Speaker 2 and the L/R link based on source count and
+        the symmetry toggle. Speaker 2 is editable only with 2 sources AND the
+        link OFF; when the link is ON it is locked (disabled) and mirrored."""
         two_sources = self.source_combo.currentText() == "2"
-        self.spk2.setEnabled(two_sources)
+        linked = two_sources and self.symmetry_chk.isChecked()
+
         self.symmetry_chk.setEnabled(two_sources)
+        self.spk2.setEnabled(two_sources and not linked)
+
+        if linked:
+            self._sync_symmetry()
+
+    def _sync_symmetry(self, *_):
+        """Mirror Speaker 2 from Speaker 1 when the L/R link is active.
+
+        Verified against old_src/main.py: X is mirrored across the room width
+        (spk2.x = Lx - spk1.x); Y and Z match Speaker 1 exactly.
+        """
+        if self.source_combo.currentText() != "2" or not self.symmetry_chk.isChecked():
+            return
+        Lx = self.room.x.value()
+        self.spk2.x.setValue(Lx - self.spk1.x.value())
+        self.spk2.y.setValue(self.spk1.y.value())
+        self.spk2.z.setValue(self.spk1.z.value())
 
     def closeEvent(self, event):
         """Release the VTK render window before the app exits."""
@@ -485,9 +513,9 @@ class MainWindow(QMainWindow):
         self.render3d = render.Render3D(panel)
         blay.addWidget(self.render3d.interactor, stretch=1)
 
-        # Frequency slider (1 Hz steps)
+        # Frequency slider (1 Hz steps), matched to the physics calc range.
         self.freq_slider = LabeledSlider(
-            "Frequency (Hz)", 1.0, 300.0, 1.0, value=20.0
+            "Frequency (Hz)", 20.0, 250.0, 1.0, value=40.0
         )
         blay.addWidget(self.freq_slider)
 
