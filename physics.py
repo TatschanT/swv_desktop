@@ -171,6 +171,21 @@ def compute_f_response_1d(room: RoomConfig, spk1: Position, spk2: Position, mic:
     f_response_db = f_response_db - np.max(f_response_db)
     return f_response_db
 
+def calc_tensor_space(room: RoomConfig, spk1: Position, spk2: Position, num_src: int, corr_mode: str, freq: float, grid_size: int = None) -> np.ndarray:
+    """Convenience wrapper around ``compute_tensor_3d`` for a SINGLE frequency.
+
+    Returns the magnitude pressure field as a 3D array of shape
+    ``(grid_size, grid_size, grid_size)`` indexed as ``[ix, iy, iz]`` (the same
+    'ij' meshgrid layout used internally), suitable for feeding straight into a
+    structured/uniform grid in the 3D view.
+    """
+    if grid_size is None:
+        grid_size = app_config.SimResolution.GRID_SIZE_NORMAL
+    freqs = np.array([float(freq)], dtype=float)
+    _, _, _, tensor = compute_tensor_3d(room, spk1, spk2, num_src, corr_mode, freqs, grid_size)
+    return tensor[0]
+
+
 def compute_tensor_3d(room: RoomConfig, spk1: Position, spk2: Position, num_src: int, corr_mode: str, freqs_3d: np.ndarray, grid_size: int = 32) -> tuple:
     Lx, Ly, Lz = room.Lx, room.Ly, room.Lz
     Rx, Ry, Rz = room.Rx, room.Ry, room.Rz

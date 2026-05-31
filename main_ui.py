@@ -28,6 +28,9 @@ from PySide6.QtWidgets import (
 import config as app_config
 import physics
 
+# View layer (3D)
+import render
+
 # ---------------------------------------------------------------------------
 # Global dimensions (px)
 # ---------------------------------------------------------------------------
@@ -241,6 +244,10 @@ class MainWindow(QMainWindow):
         self._sync_position_limits()
         self.update_room_modes()
 
+        # Wire up the 3D view signals and draw the initial field.
+        self._wire_3d_signals()
+        self.update_3d_view()
+
     # ------------------------------------------------------------------
     # LEFT PANEL
     # ------------------------------------------------------------------
@@ -333,6 +340,11 @@ class MainWindow(QMainWindow):
         self.spk2.setEnabled(two_sources)
         self.symmetry_chk.setEnabled(two_sources)
 
+    def closeEvent(self, event):
+        """Release the VTK render window before the app exits."""
+        self.render3d.close()
+        super().closeEvent(event)
+
     # ------------------------------------------------------------------
     # CONTROLLER: room <-> position constraints
     # ------------------------------------------------------------------
@@ -382,6 +394,72 @@ class MainWindow(QMainWindow):
         table.resizeColumnsToContents()
 
     # ------------------------------------------------------------------
+    # CONTROLLER: 3D pressure field
+    # ------------------------------------------------------------------
+    def _wall_reflection(self):
+        """Per-axis reflection coefficient = mean of the two opposing walls
+        (matches the original Streamlit model)."""
+        w = self.wall_sliders
+        Rx = (w["Left (X=0)"].value() + w["Right (X=Lx)"].value()) / 2.0
+        Ry = (w["Front (Y=0)"].value() + w["Back (Y=Ly)"].value()) / 2.0
+        Rz = (w["Floor (Z=0)"].value() + w["Ceiling (Z=Lz)"].value()) / 2.0
+        return Rx, Ry, Rz
+
+    def _current_room(self):
+        Rx, Ry, Rz = self._wall_reflection()
+        return physics.RoomConfig(
+            Lx=self.room.x.value(), Ly=self.room.y.value(), Lz=self.room.z.value(),
+            Rx=Rx, Ry=Ry, Rz=Rz,
+        )
+
+    def _pos(self, grp):
+        return physics.Position(grp.x.value(), grp.y.value(), grp.z.value())
+
+    def _corr_mode(self):
+        """Map the UI combo label to the substring physics.py expects."""
+        label = self.phase_combo.currentText().lower()
+        if "complex" in label:
+            return "True Complex Field"
+        if "cancel" in label:
+            return "Global Cancel"
+        return "Uncorrelated"
+
+    def update_3d_view(self, *_):
+        """Recompute the spatial tensor for the current state and push it to the
+        3D view (in place). Wired so it can accept a slider's float argument."""
+        num_src = 2 if self.source_combo.currentText() == "2" else 1
+        self.render3d.update_mesh(
+            self._current_room(),
+            self._pos(self.spk1),
+            self._pos(self.spk2),
+            self._pos(self.mic),
+            num_src,
+            self._corr_mode(),
+            self.freq_slider.value(),
+        )
+
+    def _on_param_changed(self, *_):
+        """Geometry/source changes only refresh the 3D field when the
+        'Dynamic update' toggle is on; the frequency slider always refreshes."""
+        if self.dynamic_chk.isChecked():
+            self.update_3d_view()
+
+    def _wire_3d_signals(self):
+        # Frequency always drives a recompute, regardless of the toggle.
+        self.freq_slider.valueChanged.connect(self.update_3d_view)
+
+        # Room + speaker/mic positions are gated by the Dynamic update toggle.
+        for grp in (self.room, self.spk1, self.spk2, self.mic):
+            for axis in (grp.x, grp.y, grp.z):
+                axis.valueChanged.connect(self._on_param_changed)
+        self.source_combo.currentIndexChanged.connect(self._on_param_changed)
+        self.phase_combo.currentIndexChanged.connect(self._on_param_changed)
+
+        # Wall reflection coefficients also shape the field.
+        for slider in self.wall_sliders.values():
+            slider.valueChanged.connect(self._on_param_changed)
+
+    # ------------------------------------------------------------------
     # CENTER PANEL
     # ------------------------------------------------------------------
     def _build_center(self):
@@ -403,8 +481,9 @@ class MainWindow(QMainWindow):
         blay.setContentsMargins(0, 0, 0, 0)
         blay.setSpacing(6)
 
-        view3d = make_placeholder("PyVista 3D View")
-        blay.addWidget(view3d, stretch=1)
+        # Real PyVista 3D view (replaces the former placeholder frame).
+        self.render3d = render.Render3D(panel)
+        blay.addWidget(self.render3d.interactor, stretch=1)
 
         # Frequency slider (1 Hz steps)
         self.freq_slider = LabeledSlider(
