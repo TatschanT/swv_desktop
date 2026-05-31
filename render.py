@@ -28,15 +28,20 @@ import physics
 SPK_COLOR = "#38bdf8"      # bright cyan-blue
 MIC_COLOR = "#f43f5e"      # bright red
 OUTLINE_COLOR = "#dddddd"
-FLOOR_COLOR = "#2a2f38"
-FLOOR_EDGE = "#5b6677"
+FLOOR_DARK = "#16233f"     # checkerboard: dark blue
+FLOOR_LIGHT = "#b8c4d0"    # checkerboard: light gray
 AXES_COLOR = "#cccccc"
 BG_COLOR = "#101418"
 
+# Resolution (cells per side) of the checkerboard floor.
+FLOOR_RES = 8
+
 # Opacity transfer function across the (normalized) [0, 1] range. Low pressure
 # (nodes) stays see-through so you can look inside the room; high pressure
-# (anti-nodes) is rendered solidly so the field is clearly visible.
-OPACITY_TF = [0.0, 0.08, 0.2, 0.45, 0.75, 1.0]
+# (anti-nodes) is FULLY opaque (1.0) so their color saturates and matches the
+# pure colors shown on the scalar bar instead of washing out against the
+# background. The mids are deliberately opaque enough to read their true hue.
+OPACITY_TF = [0.0, 0.1, 0.3, 0.6, 0.85, 1.0]
 
 # Print tensor min/max each update for debugging the data pipeline.
 DEBUG = False
@@ -70,12 +75,17 @@ class Render3D:
         self.grid.point_data.active_scalars_name = self.SCALARS
 
         # ---- Volume + scalar bar (color gauge) --------------------------
+        # cmap + clim are identical to the scalar bar's, so the hues are mapped
+        # the same way in both; shade=False keeps colors at their true (unlit)
+        # value and linear interpolation (set below) avoids blocky washed cells.
         self.vol_actor = self.plotter.add_volume(
             self.grid,
             scalars=self.SCALARS,
             cmap="jet",
             opacity=OPACITY_TF,
             clim=[0.0, 1.0],            # data normalized to exactly [0, 1]
+            shade=False,                # no lighting darkening -> colors stay true
+            opacity_unit_distance=min(self._spacing(room)),
             show_scalar_bar=True,
             scalar_bar_args=dict(
                 title="Normalized Pressure",
@@ -87,14 +97,28 @@ class Render3D:
                 color="white",
             ),
         )
+        # Smooth (linear) sampling so colors blend cleanly instead of rendering
+        # as washed-out nearest-neighbour blocks.
+        self.vol_actor.prop.SetInterpolationTypeToLinear()
         self._tune_opacity_distance(room)
 
-        # ---- Floor grid at Z=0 (resizes with the room) ------------------
+        # CRITICAL (geometry-update fix): add_volume() binds the mapper to a
+        # *shallow copy* of the ImageData. That copy shares the scalar arrays by
+        # reference (so color updates work) but copies spacing/origin/extent by
+        # VALUE -- so changing self.grid.spacing later never reaches the mapper
+        # and the volume stays clipped to the original room bounds. Rebinding the
+        # mapper's input to self.grid itself makes geometry edits propagate too.
+        self._vol_mapper = self.vol_actor.GetMapper()
+        self._vol_mapper.SetInputData(self.grid)
+
+        # ---- Checkerboard floor at Z=0 (resizes with the room) ----------
+        # Solid (opacity 1.0), high-contrast light-gray / dark-blue tiles so the
+        # floor instantly reads as a real ground plane and "down" is obvious.
         self.floor = self._make_floor(room)
         self.floor_actor = self.plotter.add_mesh(
-            self.floor, color=FLOOR_COLOR, opacity=0.55,
-            show_edges=True, edge_color=FLOOR_EDGE, line_width=1,
-            lighting=False, name="floor",
+            self.floor, scalars="checker", cmap=[FLOOR_DARK, FLOOR_LIGHT],
+            show_scalar_bar=False, opacity=1.0, lighting=False,
+            show_edges=True, edge_color="#33405a", line_width=1, name="floor",
         )
 
         # ---- Room outline ----------------------------------------------
@@ -138,13 +162,21 @@ class Render3D:
         return (room.Lx / (n - 1), room.Ly / (n - 1), room.Lz / (n - 1))
 
     def _make_floor(self, room) -> pv.PolyData:
-        # Fixed resolution so it can be updated later with copy_from().
-        return pv.Plane(
-            center=(room.Lx / 2.0, room.Ly / 2.0, 0.0),
+        # Fixed resolution so it can be updated later with copy_from(). A small
+        # negative Z offset keeps the solid floor from z-fighting the volume's
+        # bottom face and the room outline at Z=0.
+        plane = pv.Plane(
+            center=(room.Lx / 2.0, room.Ly / 2.0, -0.01),
             direction=(0.0, 0.0, 1.0),
             i_size=room.Lx, j_size=room.Ly,
-            i_resolution=10, j_resolution=10,
+            i_resolution=FLOOR_RES, j_resolution=FLOOR_RES,
         )
+        # Per-cell 0/1 checkerboard pattern (tile color alternates with parity).
+        idx = np.arange(plane.n_cells)
+        checker = (((idx // FLOOR_RES) + (idx % FLOOR_RES)) % 2).astype(np.float32)
+        plane.cell_data["checker"] = checker
+        plane.set_active_scalars("checker")
+        return plane
 
     def _sphere(self, x, y, z) -> pv.PolyData:
         return pv.Sphere(radius=self._marker_r, center=(x, y, z))
@@ -163,11 +195,21 @@ class Render3D:
         render_window = getattr(self.plotter, "render_window", None) or self.plotter.ren_win
         main = self.plotter.renderer
 
+        # Pick a layer strictly above every existing renderer. PyVista's
+        # orientation-axes widget (add_axes) already sits on layer 1, so reusing
+        # that layer lets it overdraw our markers; a dedicated top layer doesn't.
+        existing = render_window.GetRenderers()
+        existing.InitTraversal()
+        max_layer = 0
+        for _ in range(existing.GetNumberOfItems()):
+            max_layer = max(max_layer, existing.GetNextItem().GetLayer())
+        top_layer = max_layer + 1
+
         self._overlay = vtk.vtkRenderer()
-        self._overlay.SetLayer(1)
+        self._overlay.SetLayer(top_layer)
         self._overlay.InteractiveOff()
         self._overlay.SetActiveCamera(main.GetActiveCamera())   # share camera
-        render_window.SetNumberOfLayers(2)
+        render_window.SetNumberOfLayers(top_layer + 1)
         render_window.AddRenderer(self._overlay)
 
         for actor in (self.spk1_actor, self.spk2_actor, self.mic_actor):
@@ -209,11 +251,19 @@ class Render3D:
 
         scalars = self._normalize(pressure.ravel(order="F"))
 
-        # 2. Geometry follows the room (spacing only; the point count is fixed).
+        # 2. Geometry follows the room. The point count (extent) is fixed, only
+        #    the spacing changes -> the box grows/shrinks. Because the mapper
+        #    input IS self.grid (rebound in __init__), this reaches the volume;
+        #    we still flag both the data and the mapper modified so VTK drops any
+        #    cached bounding box and re-evaluates the new extent.
         self.grid.spacing = self._spacing(room)
+        self.grid.Modified()
+        self._vol_mapper.Modified()
         self._tune_opacity_distance(room)
         self.outline.copy_from(self.grid.outline())
         self.floor.copy_from(self._make_floor(room))
+        self.floor.set_active_scalars("checker")   # keep checkerboard mapping
+        # CubeAxesActor must frame the NEW bounds.
         self.cube_axes.SetBounds(self.grid.bounds)
 
         # 3. Write the new values *into the existing* VTK scalar array (not a
