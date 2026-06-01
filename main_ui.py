@@ -1,14 +1,17 @@
 import os
 os.environ["QT_QPA_PLATFORM"] = "xcb"  # Wayland fix
 
+import csv
 import sys
+from datetime import datetime
 
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QFont
+from PySide6.QtGui import QFont, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
     QComboBox,
+    QFileDialog,
     QFrame,
     QGridLayout,
     QGroupBox,
@@ -16,6 +19,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QMainWindow,
+    QMessageBox,
     QPushButton,
     QSlider,
     QTableWidget,
@@ -514,6 +518,104 @@ class MainWindow(QMainWindow):
         and the 2D response curve exactly once, regardless of the toggle."""
         self._refresh(recompute_response=True)
 
+    def _on_reset_view(self):
+        """Forcefully restore the default isometric view of the current room.
+
+        Manual rotation/zoom/pan leaves the camera with a custom focal point and
+        view-up that a bare ``reset_camera()`` will preserve, so the view appears
+        not to reset. We therefore:
+          1. snap the camera back to the canonical isometric orientation
+             (this clears the user's manual focal point / view-up), then
+          2. refit it to the current room bounds at the VTK renderer level, then
+          3. force the embedded Qt widget to repaint.
+        """
+        plotter = self.render3d.plotter
+        # 1. Force the camera out of its manual state to the default iso angle.
+        plotter.camera_position = "iso"
+        # 2. Refit to the current room bounds (vtkRenderer-level reset).
+        plotter.renderer.ResetCamera(*self.render3d.grid.bounds)
+        # 3. Repaint the Qt widget (processEvents flush, not just a VTK draw).
+        plotter.update()
+
+    # ------------------------------------------------------------------
+    # CONTROLLER: data export
+    # ------------------------------------------------------------------
+    def on_export_clicked(self):
+        """Export the current parameters, frequency-response curve and room
+        modes to a CSV file chosen by the user.
+
+        Does nothing if the user cancels the save dialog. The CSV is laid out as
+        three labelled sections separated by blank lines so it stays readable in
+        a spreadsheet while remaining a single file.
+        """
+        default_name = "swv_export_{}.csv".format(
+            datetime.now().strftime("%Y%m%d_%H%M%S")
+        )
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Export Data", default_name, "CSV files (*.csv)"
+        )
+        if not path:
+            # User cancelled the dialog -> nothing to do.
+            return
+        if not path.lower().endswith(".csv"):
+            path += ".csv"
+
+        # Gather current state.
+        room = self._current_room()
+        spk1, spk2, mic = self._pos(self.spk1), self._pos(self.spk2), self._pos(self.mic)
+        num_src = 2 if self.source_combo.currentText() == "2" else 1
+        w = self.wall_sliders
+        modes = physics.calc_room_modes(room)
+
+        try:
+            with open(path, "w", newline="", encoding="utf-8") as fh:
+                writer = csv.writer(fh)
+
+                # --- Section 1: parameters -------------------------------
+                writer.writerow(["[Parameters]"])
+                writer.writerow(["Parameter", "Value"])
+                writer.writerow(["Room Lx (m)", f"{room.Lx:.3f}"])
+                writer.writerow(["Room Ly (m)", f"{room.Ly:.3f}"])
+                writer.writerow(["Room Lz (m)", f"{room.Lz:.3f}"])
+                writer.writerow(["Speaker 1 (x,y,z)", f"{spk1.x:.3f}, {spk1.y:.3f}, {spk1.z:.3f}"])
+                if num_src == 2:
+                    writer.writerow(["Speaker 2 (x,y,z)", f"{spk2.x:.3f}, {spk2.y:.3f}, {spk2.z:.3f}"])
+                writer.writerow(["Mic (x,y,z)", f"{mic.x:.3f}, {mic.y:.3f}, {mic.z:.3f}"])
+                writer.writerow(["Reflection Rx", f"{room.Rx:.3f}"])
+                writer.writerow(["Reflection Ry", f"{room.Ry:.3f}"])
+                writer.writerow(["Reflection Rz", f"{room.Rz:.3f}"])
+                writer.writerow(["Wall Left (X=0)", f"{w['Left (X=0)'].value():.2f}"])
+                writer.writerow(["Wall Right (X=Lx)", f"{w['Right (X=Lx)'].value():.2f}"])
+                writer.writerow(["Wall Front (Y=0)", f"{w['Front (Y=0)'].value():.2f}"])
+                writer.writerow(["Wall Back (Y=Ly)", f"{w['Back (Y=Ly)'].value():.2f}"])
+                writer.writerow(["Wall Floor (Z=0)", f"{w['Floor (Z=0)'].value():.2f}"])
+                writer.writerow(["Wall Ceiling (Z=Lz)", f"{w['Ceiling (Z=Lz)'].value():.2f}"])
+                writer.writerow(["Frequency (Hz)", f"{self.freq_slider.value():.1f}"])
+                writer.writerow(["Source count", num_src])
+                writer.writerow(["Phase correction", self._corr_mode()])
+                writer.writerow(["Spatial smoothing", self.plot2d.smoothing_chk.isChecked()])
+
+                # --- Section 2: frequency response -----------------------
+                writer.writerow([])
+                writer.writerow(["[Frequency Response]"])
+                writer.writerow(["Frequency (Hz)", "Relative SPL (dB)"])
+                freqs, db = self.plot2d._freqs, self.plot2d._db
+                if db is not None:
+                    for f, d in zip(freqs, db):
+                        writer.writerow([f"{f:.1f}", f"{d:.3f}"])
+
+                # --- Section 3: room modes -------------------------------
+                writer.writerow([])
+                writer.writerow(["[Room Modes]"])
+                writer.writerow(["Frequency (Hz)", "Mode (nx, ny, nz)", "Length (m)"])
+                for freq, (nx, ny, nz), length in modes:
+                    writer.writerow([f"{freq:.1f}", f"({nx}, {ny}, {nz})", f"{length:.3f}"])
+        except OSError as exc:
+            QMessageBox.critical(self, "Export failed", f"Could not write file:\n{exc}")
+            return
+
+        QMessageBox.information(self, "Export complete", f"Data exported to:\n{path}")
+
     def _wire_3d_signals(self):
         # Frequency: live marker on drag (+ optional live recompute), and a
         # single heavy recompute when the gesture finishes.
@@ -533,6 +635,14 @@ class MainWindow(QMainWindow):
         # Combos are discrete commits -> recompute immediately.
         self.source_combo.currentIndexChanged.connect(self._on_param_committed)
         self.phase_combo.currentIndexChanged.connect(self._on_param_committed)
+
+        self.reset_view_btn.clicked.connect(self._on_reset_view)
+
+        # Spatial smoothing is a discrete commit -> full response recompute.
+        self.plot2d.smoothing_chk.toggled.connect(self._on_param_committed)
+
+        # Export current state to CSV.
+        self.export_btn.clicked.connect(self.on_export_clicked)
 
     # ------------------------------------------------------------------
     # CENTER PANEL
@@ -566,14 +676,15 @@ class MainWindow(QMainWindow):
         )
         blay.addWidget(self.freq_slider)
 
-        # Toggle switches bottom-right
+        # Toggle and action controls bottom-right
         toggles = QHBoxLayout()
         toggles.addStretch()
         self.dynamic_chk = QCheckBox("Dynamic update")
-        self.camlock_chk = QCheckBox("Camera lock")
-        for chk in (self.dynamic_chk, self.camlock_chk):
-            chk.setFont(mono(9, bold=True))
-            toggles.addWidget(chk)
+        self.dynamic_chk.setFont(mono(9, bold=True))
+        toggles.addWidget(self.dynamic_chk)
+        self.reset_view_btn = QPushButton("Reset View")
+        self.reset_view_btn.setFont(mono(9, bold=True))
+        toggles.addWidget(self.reset_view_btn)
         blay.addLayout(toggles)
 
         lay.addWidget(bottom)
@@ -591,10 +702,20 @@ class MainWindow(QMainWindow):
         lay.setContentsMargins(8, 8, 8, 8)
         lay.setSpacing(8)
 
-        # --- Title banner (72 px) ------------------------------------
-        banner = make_placeholder("Title Banner", bg="#b1b2b5")
-        banner.setFixedHeight(BANNER_H)
-        lay.addWidget(banner)
+        # --- Logo banner (72 px) ------------------------------------
+        banner_label = QLabel()
+        banner_label.setFixedHeight(BANNER_H)
+        banner_label.setAlignment(Qt.AlignCenter)
+        banner_label.setStyleSheet("background-color: #b1b2b5;")
+        logo_path = os.path.join(
+            os.path.dirname(os.path.abspath(__file__)), "images", "SWVlogo_s.jpg"
+        )
+        pixmap = QPixmap(logo_path)
+        if not pixmap.isNull():
+            banner_label.setPixmap(
+                pixmap.scaled(RIGHT_W - 16, BANNER_H, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+            )
+        lay.addWidget(banner_label)
 
         # --- Wall reflection coefficients ----------------------------
         wall_box = QGroupBox("Wall reflection coefficients")
