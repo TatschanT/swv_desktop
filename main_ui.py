@@ -35,6 +35,7 @@ import physics
 # View layer (3D + 2D)
 import render
 from graphs import Plot2DWidget
+from settings_ui import SettingsDialog, load_settings
 
 # ---------------------------------------------------------------------------
 # Global dimensions (px)
@@ -245,6 +246,10 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("Standing Wave Viewer")
         self.setFixedSize(WIN_W, WIN_H)
         self.setFont(mono(10))
+
+        # Apply any persisted settings BEFORE building the panels: the 3D grid
+        # size and the 2D frequency axis are read from config at construction.
+        load_settings()
 
         central = QWidget()
         self.setCentralWidget(central)
@@ -617,6 +622,27 @@ class MainWindow(QMainWindow):
 
         QMessageBox.information(self, "Export complete", f"Data exported to:\n{path}")
 
+    # ------------------------------------------------------------------
+    # CONTROLLER: settings dialog
+    # ------------------------------------------------------------------
+    def _open_settings(self):
+        """Open the modal Settings dialog. It mutates config in place and emits
+        ``settings_applied``, which we react to with a full rebuild + refresh."""
+        dlg = SettingsDialog(self)
+        dlg.settings_applied.connect(self._on_settings_applied)
+        dlg.exec()
+
+    def _on_settings_applied(self):
+        """React to applied settings. Some config values are consumed only at
+        construction (3D grid size) or cached (2D frequency axis), so rebuild
+        those explicitly, refresh the room-modes table (depends on speed of
+        sound / max frequency), then recompute the 3D + 2D views once."""
+        room = self._current_room()
+        self.render3d.set_grid_size(app_config.SimResolution.GRID_SIZE_NORMAL, room)
+        self.plot2d.rebuild_freqs()
+        self.update_room_modes()
+        self._refresh(recompute_response=True)
+
     def _wire_3d_signals(self):
         # Frequency: live marker on drag (+ optional live recompute), and a
         # single heavy recompute when the gesture finishes.
@@ -644,6 +670,9 @@ class MainWindow(QMainWindow):
 
         # Export current state to CSV.
         self.export_btn.clicked.connect(self.on_export_clicked)
+
+        # Open the runtime settings dialog.
+        self.settings_btn.clicked.connect(self._open_settings)
 
     # ------------------------------------------------------------------
     # CENTER PANEL

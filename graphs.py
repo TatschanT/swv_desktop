@@ -26,9 +26,6 @@ MIC_COLOR = "#f43f5e"     # red circle
 RESP_COLOR = "#4ade80"    # green response curve
 MARK_COLOR = "#f43f5e"    # red current-frequency line
 
-FREQ_MIN = 20.0
-FREQ_MAX = 250.0
-
 # Fixed dB window for the response plot (normalized to 0 dB max, with headroom)
 # so the Y-axis never rescales/jumps as the curve changes.
 DB_MIN = -25.0
@@ -49,11 +46,24 @@ class Plot2DWidget(FigureCanvasQTAgg):
         self.ax_freq = self.fig.add_subplot(1, 2, 2)
         self.fig.subplots_adjust(left=0.07, right=0.97, top=0.88, bottom=0.16, wspace=0.28)
 
-        # Frequency axis is fixed -> precompute once and reuse every recompute.
-        self._freqs = np.arange(FREQ_MIN, FREQ_MAX + 1.0, 1.0)
+        # Frequency sample axis, derived from config so the Settings dialog can
+        # change it. Precomputed and reused on every recompute until rebuilt.
+        self._freqs = None
+        self.rebuild_freqs()
         self._marker = None   # the vertical "current frequency" line
         self._annot = None    # the "-x.x dB" text next to the marker
         self._db = None       # last computed response curve (for marker lookup)
+
+    def rebuild_freqs(self):
+        """(Re)build the frequency sample axis from ``config.SimResolution``.
+
+        Uses ``np.arange(start, end, step)`` (end-exclusive, matching the rest
+        of the resolution config). A guard guarantees at least two points so a
+        degenerate start>=end never yields an empty curve.
+        """
+        r = app_config.SimResolution
+        start, end, step = r.FREQ_1D_START, r.FREQ_1D_END, r.FREQ_1D_STEP
+        self._freqs = np.arange(start, max(end, start + step), step)
 
     # -- styling helper --------------------------------------------------
     @staticmethod
@@ -125,14 +135,15 @@ class Plot2DWidget(FigureCanvasQTAgg):
             ha=self._annot_ha(current_freq), va="top", zorder=6,
         )
 
-        # FIXED Y-axis so the plot never rescales/jumps as the curve changes.
-        ax.set_xlim(FREQ_MIN, FREQ_MAX)
+        # X-axis follows the (config-driven) frequency sample range; fixed
+        # Y-axis so the plot never rescales/jumps as the curve changes.
+        ax.set_xlim(self._freqs[0], self._freqs[-1])
         ax.set_ylim(DB_MIN, DB_MAX)
 
-    @staticmethod
-    def _annot_ha(freq):
+    def _annot_ha(self, freq):
         # Flip text alignment near the right edge so the label never clips off.
-        return "right" if freq > (FREQ_MIN + FREQ_MAX) / 2 else "left"
+        mid = 0.5 * (self._freqs[0] + self._freqs[-1])
+        return "right" if freq > mid else "left"
 
     def update_freq_marker(self, current_freq):
         """Cheap update: move ONLY the vertical line and refresh the dB readout

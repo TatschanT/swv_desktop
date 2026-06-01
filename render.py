@@ -292,6 +292,39 @@ class Render3D:
         # 6. Re-render. No clear() / no re-add -> zoom, rotation, pan preserved.
         self.plotter.render()
 
+    def set_grid_size(self, new_size, room):
+        """Rebuild the volume grid at a new per-axis resolution, IN PLACE.
+
+        Changing the sample count changes the point count, so a fresh ImageData
+        is unavoidable. We rebuild it, re-seed its scalar buffer and re-point the
+        EXISTING volume mapper at it (``SetInputData``). The volume actor itself
+        is reused -- no ``clear()`` / ``add_volume()`` / ``remove_actor()`` -- so
+        the camera (zoom / rotation / pan) is preserved per the in-place rule.
+
+        Does nothing if the size is unchanged. The grid is seeded with zeros;
+        the caller is expected to follow up with ``update_mesh`` to fill in the
+        real field at the current parameters.
+        """
+        new_size = int(new_size)
+        if new_size == self.grid_size:
+            return
+        self.grid_size = new_size
+
+        # Fresh grid at the new resolution; spacing follows the current room.
+        self.grid = self._make_grid(room)
+        self._last_spacing = self._spacing(room)
+        seed = np.zeros(self.grid.n_points, dtype=np.float32)
+        self.grid.point_data[self.SCALARS] = seed
+        self.grid.point_data.active_scalars_name = self.SCALARS
+
+        # Re-point the existing mapper at the new grid (keeps the volume actor).
+        self._vol_mapper.SetInputData(self.grid)
+        self._vol_mapper.Modified()
+
+        # Outline frames the same bounds; refresh it from the new grid.
+        self.outline.copy_from(self.grid.outline())
+        self._tune_opacity_distance(room)
+
     def close(self):
         """Release the VTK render window (call on app shutdown)."""
         self.plotter.close()
