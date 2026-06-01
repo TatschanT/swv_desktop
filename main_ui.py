@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
     QGridLayout,
     QGroupBox,
     QHBoxLayout,
+    QHeaderView,
     QLabel,
     QLineEdit,
     QMainWindow,
@@ -276,7 +277,11 @@ class MainWindow(QMainWindow):
     def _build_left(self):
         panel = QWidget()
         panel.setFixedWidth(LEFT_W)
-        panel.setStyleSheet("border-right: 2px solid #000;")
+        # Scope the divider border to the panel itself; an unscoped rule would
+        # cascade to every child widget (group boxes, labels, sliders) and add
+        # stray borders that corrupt their rendering.
+        panel.setObjectName("leftPanel")
+        panel.setStyleSheet("#leftPanel { border-right: 2px solid #000; }")
         lay = QVBoxLayout(panel)
         lay.setContentsMargins(8, 8, 8, 8)
         lay.setSpacing(6)
@@ -440,8 +445,6 @@ class MainWindow(QMainWindow):
                 cells = ["", "", ""]
             for c, text in enumerate(cells):
                 table.setItem(r, c, QTableWidgetItem(text))
-
-        table.resizeColumnsToContents()
 
     # ------------------------------------------------------------------
     # CONTROLLER: 3D pressure field
@@ -745,7 +748,10 @@ class MainWindow(QMainWindow):
     def _build_right(self):
         panel = QWidget()
         panel.setFixedWidth(RIGHT_W)
-        panel.setStyleSheet("border-left: 2px solid #000;")
+        # Scope the divider border to the panel itself; an unscoped rule would
+        # cascade to every child widget and corrupt the group-box titles.
+        panel.setObjectName("rightPanel")
+        panel.setStyleSheet("#rightPanel { border-left: 2px solid #000; }")
         lay = QVBoxLayout(panel)
         lay.setContentsMargins(8, 8, 8, 8)
         lay.setSpacing(8)
@@ -778,9 +784,10 @@ class MainWindow(QMainWindow):
             ("Floor (Z=0)", "Ceiling (Z=Lz)"),
         ]
         self.wall_sliders = {}
+        R0 = app_config.AppDefaults.R
         for row, (a, b) in enumerate(wall_pairs):
-            sa = LabeledSlider(a, 0.0, 1.0, 0.1, value=1.0)
-            sb = LabeledSlider(b, 0.0, 1.0, 0.1, value=1.0)
+            sa = LabeledSlider(a, 0.0, 1.0, 0.1, value=R0)
+            sb = LabeledSlider(b, 0.0, 1.0, 0.1, value=R0)
             wall_lay.addWidget(sa, row, 0)
             wall_lay.addWidget(sb, row, 1)
             self.wall_sliders[a] = sa
@@ -792,17 +799,21 @@ class MainWindow(QMainWindow):
         modes_box.setFont(mono(10, bold=True))
         modes_lay = QVBoxLayout(modes_box)
         self.modes_table = QTableWidget(16, 3)
-        self.modes_table.setFont(mono(9))
+        self.modes_table.setFont(mono(10))
         self.modes_table.setHorizontalHeaderLabels(
             ["Hz", "Modes (x, y, z)", "L (m)"]
         )
         self.modes_table.verticalHeader().setVisible(False)
-        self.modes_table.horizontalHeader().setFont(mono(9, bold=True))
+        self.modes_table.horizontalHeader().setFont(mono(10, bold=True))
         self.modes_table.setEditTriggers(QTableWidget.NoEditTriggers)
+        # Small breathing room between cell text and the cell borders.
+        self.modes_table.setStyleSheet("QTableWidget::item { padding: 1px; }")
+        # Distribute the three columns evenly across the full panel width
+        # instead of sizing to content (which left them bunched on the left).
+        self.modes_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
         for r in range(16):
             for c in range(3):
                 self.modes_table.setItem(r, c, QTableWidgetItem(""))
-        self.modes_table.resizeColumnsToContents()
         modes_lay.addWidget(self.modes_table)
         lay.addWidget(modes_box, stretch=1)
 

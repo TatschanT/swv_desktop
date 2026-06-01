@@ -132,8 +132,13 @@ class Render3D:
         self.mic_actor = self._add_marker(self.mic_marker, MIC_COLOR)
 
         # ---- Cube-axes framing (bounds updated in place) ---------------
+        # all_edges=False: with it True, show_bounds() adds a SEPARATE static
+        # bounding-box actor fixed at the initial bounds that SetBounds() never
+        # updates -- so it ghosts when the room shrinks. The box edges are
+        # already drawn (and updated in place) by self.outline above, so the
+        # all_edges box is redundant anyway.
         self.cube_axes = self.plotter.show_bounds(
-            grid="front", location="outer", all_edges=True,
+            grid="front", location="outer", all_edges=False,
             color=AXES_COLOR,
             xtitle="X (m)", ytitle="Y (m)", ztitle="Z (m)",
         )
@@ -263,8 +268,10 @@ class Render3D:
         self.outline.copy_from(self.grid.outline())
         self.floor.copy_from(self._make_floor(room))
         self.floor.set_active_scalars("checker")   # keep checkerboard mapping
-        # CubeAxesActor must frame the NEW bounds.
+        # CubeAxesActor must frame the NEW bounds. Modified() forces it to drop
+        # cached geometry so the old (e.g. larger) frame can't linger as a ghost.
         self.cube_axes.SetBounds(self.grid.bounds)
+        self.cube_axes.Modified()
 
         # 3. Write the new values *into the existing* VTK scalar array (not a
         #    fresh array) and flag it modified, so the volume mapper re-reads it.
