@@ -67,5 +67,11 @@ class SimResolution:
     FREQ_3D_STEP_HIGH = 2
     GRID_SIZE_HIGH = 37
 
-    # スムージング時のマイク位置の微小変位 (m)
-    SMOOTHING_OFFSET = 0.1
+    # Spatial smoothing (spatial averaging) settings.
+    # The mic position is sampled over a cube of +/- SMOOTHING_RADIUS [m] with
+    # SMOOTHING_SAMPLES points per axis, then RMS-averaged across all samples.
+    # A larger radius averages over a wider region, smoothing sharp dips/peaks
+    # more strongly so the effect is more visible; more samples make the
+    # averaging smoother. (radius=0.3, samples=5 -> 5^3 = 125 sample points.)
+    SMOOTHING_RADIUS = 0.3
+    SMOOTHING_SAMPLES = 5

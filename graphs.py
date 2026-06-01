@@ -14,9 +14,6 @@ from matplotlib.figure import Figure
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
 from matplotlib.patches import Rectangle
 
-from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QCheckBox
-
 import config as app_config
 import physics
 
@@ -57,31 +54,6 @@ class Plot2DWidget(FigureCanvasQTAgg):
         self._marker = None   # the vertical "current frequency" line
         self._annot = None    # the "-x.x dB" text next to the marker
         self._db = None       # last computed response curve (for marker lookup)
-
-        # Spatial-smoothing toggle, overlaid on the top-right of the frequency
-        # response subplot. Toggling it requires a full response recompute, so
-        # the controller wires `smoothing_chk.toggled` into its commit path; the
-        # current state is read back here in `update_freq_response`.
-        self.smoothing_chk = QCheckBox("Spatial Smoothing", self)
-        self.smoothing_chk.setStyleSheet(
-            f"QCheckBox {{ color: {FG}; background-color: {BG}; "
-            f"font-size: 8pt; padding: 2px; }}"
-        )
-        self.smoothing_chk.show()
-        self._reposition_smoothing_chk()
-
-    # -- smoothing checkbox placement ------------------------------------
-    def _reposition_smoothing_chk(self):
-        """Pin the smoothing checkbox to the top-right corner of the canvas
-        (which sits over the frequency-response subplot)."""
-        chk = self.smoothing_chk
-        chk.adjustSize()
-        margin = 8
-        chk.move(self.width() - chk.width() - margin, margin)
-
-    def resizeEvent(self, event):
-        super().resizeEvent(event)
-        self._reposition_smoothing_chk()
 
     # -- styling helper --------------------------------------------------
     @staticmethod
@@ -128,14 +100,15 @@ class Plot2DWidget(FigureCanvasQTAgg):
         ax.set_aspect("equal", adjustable="box")
 
     # -- right subplot: 1D frequency response ----------------------------
-    def update_freq_response(self, room, spk1, spk2, mic, num_src, corr_mode, current_freq):
+    def update_freq_response(self, room, spk1, spk2, mic, num_src, corr_mode, current_freq,
+                             smoothing=False):
         ax = self.ax_freq
         ax.clear()
         self._style(ax, "Frequency Response", "Frequency [Hz]", "Relative SPL [dB]")
 
         db = physics.compute_f_response_1d(
             room, spk1, spk2, mic, num_src, corr_mode, self._freqs,
-            smoothing=self.smoothing_chk.isChecked(),
+            smoothing=smoothing,
         )
         self._db = db
         ax.plot(self._freqs, db, color=RESP_COLOR, lw=1.5)
@@ -175,17 +148,20 @@ class Plot2DWidget(FigureCanvasQTAgg):
 
     # -- combined entry point --------------------------------------------
     def update_all(self, room, spk1, spk2, mic, num_src, corr_mode, current_freq,
-                   recompute_response=True):
+                   recompute_response=True, smoothing=False):
         """Update the 2D plots.
 
         recompute_response=True  -> redraw layout + recompute the response curve
                                     (use when geometry / sources / walls change).
         recompute_response=False -> only move the frequency marker line
                                     (use when ONLY the frequency slider moves).
+        ``smoothing`` is forwarded to the response recompute (ignored when only
+        the marker moves).
         """
         if recompute_response:
             self.update_top_down(room, spk1, spk2, mic, num_src)
-            self.update_freq_response(room, spk1, spk2, mic, num_src, corr_mode, current_freq)
+            self.update_freq_response(room, spk1, spk2, mic, num_src, corr_mode, current_freq,
+                                      smoothing=smoothing)
             self.draw()
         else:
             self.update_freq_marker(current_freq)

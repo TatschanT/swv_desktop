@@ -97,8 +97,13 @@ def compute_f_response_1d(room: RoomConfig, spk1: Position, spk2: Position, mic:
     sx2, sy2, sz2 = spk2.x, spk2.y, spk2.z
 
     if smoothing:
-        d_val = app_config.SimResolution.SMOOTHING_OFFSET
-        offsets = [-d_val, 0, d_val]
+        # Sample a cube of mic positions of half-width SMOOTHING_RADIUS with
+        # SMOOTHING_SAMPLES points per axis (so samples^3 points total), then
+        # RMS-average the response over them. linspace includes the center when
+        # the sample count is odd, so the un-smoothed point is still represented.
+        radius = app_config.SimResolution.SMOOTHING_RADIUS
+        samples = app_config.SimResolution.SMOOTHING_SAMPLES
+        offsets = np.linspace(-radius, radius, samples)
         mic_positions = [(mic.x + dx, mic.y + dy, mic.z + dz) for dx in offsets for dy in offsets for dz in offsets]
     else:
         mic_positions = [(mic.x, mic.y, mic.z)]

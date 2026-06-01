@@ -490,6 +490,7 @@ class MainWindow(QMainWindow):
         self.plot2d.update_all(
             room, spk1, spk2, mic, num_src, corr, freq,
             recompute_response=recompute_response,
+            smoothing=self.smoothing_chk.isChecked(),
         )
 
     # ---- Frequency slider --------------------------------------------
@@ -593,7 +594,7 @@ class MainWindow(QMainWindow):
                 writer.writerow(["Frequency (Hz)", f"{self.freq_slider.value():.1f}"])
                 writer.writerow(["Source count", num_src])
                 writer.writerow(["Phase correction", self._corr_mode()])
-                writer.writerow(["Spatial smoothing", self.plot2d.smoothing_chk.isChecked()])
+                writer.writerow(["Spatial smoothing", self.smoothing_chk.isChecked()])
 
                 # --- Section 2: frequency response -----------------------
                 writer.writerow([])
@@ -639,7 +640,7 @@ class MainWindow(QMainWindow):
         self.reset_view_btn.clicked.connect(self._on_reset_view)
 
         # Spatial smoothing is a discrete commit -> full response recompute.
-        self.plot2d.smoothing_chk.toggled.connect(self._on_param_committed)
+        self.smoothing_chk.toggled.connect(self._on_param_committed)
 
         # Export current state to CSV.
         self.export_btn.clicked.connect(self.on_export_clicked)
@@ -655,9 +656,27 @@ class MainWindow(QMainWindow):
         lay.setSpacing(8)
 
         # --- Top section (340 px): embedded Matplotlib 2D plots ------
+        top_section = QWidget()
+        top_section.setFixedHeight(TOP_H - 16)
+        top_lay = QVBoxLayout(top_section)
+        top_lay.setContentsMargins(0, 0, 0, 0)
+        top_lay.setSpacing(2)
+
         self.plot2d = Plot2DWidget(panel)
-        self.plot2d.setFixedHeight(TOP_H - 16)
-        lay.addWidget(self.plot2d)
+        top_lay.addWidget(self.plot2d, stretch=1)
+
+        # Spatial-smoothing toggle in the bottom-right of the 2D-graph panel.
+        # Toggling it requires a full response recompute, so the controller
+        # wires it into the commit path (see _wire_3d_signals).
+        smooth_row = QHBoxLayout()
+        smooth_row.setContentsMargins(0, 0, 0, 0)
+        smooth_row.addStretch()
+        self.smoothing_chk = QCheckBox("Spatial Smoothing")
+        self.smoothing_chk.setFont(mono(9, bold=True))
+        smooth_row.addWidget(self.smoothing_chk)
+        top_lay.addLayout(smooth_row)
+
+        lay.addWidget(top_section)
 
         # --- Bottom section (660 px) ---------------------------------
         bottom = QWidget()
