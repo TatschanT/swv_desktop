@@ -10,7 +10,7 @@ If it proves useful to anyone out there, I couldn’t be happier.
 
 - **Native Desktop UI**: Fully integrated single-window application built with PySide6. The 3D view, 2D graphs, and controls are all visible at once without page reloads.
 - **Interactive 3D Room Setup**: Easily adjust room dimensions, speaker coordinates, and microphone positions using slider controls. 
-- **Accurate Frequency Response**: Simulates the frequency response (20Hz - 200Hz) at the microphone position, accounting for room dimensions and wall reflection coefficients.
+- **Accurate Frequency Response**: Simulates the frequency response (20Hz - 250Hz, adjustable) at the microphone position, accounting for room dimensions and wall reflection coefficients.
 - **Volumetric 3D Visualization**: Powered by **PyVista and VTK**, it animates the sound pressure distribution (nodes and antinodes) across the entire 3D room space for any given frequency with high-performance volumetric rendering. The camera viewpoint is perfectly preserved during real-time updates.
 - **Advanced Stereo Interference Models**: 
   Supports both Mono and Stereo configurations with three calculation modes:
