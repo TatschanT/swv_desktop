@@ -30,6 +30,18 @@ class AppDefaults:
     CHART_HEIGHT_NORMAL = 500
     CHART_HEIGHT_LARGE = 800
 
+    # Contour ("Clear Visibility") 3D render mode -- statistical iso-surface
+    # thresholds (ported from old_src/render.py "Statistical Scaling").
+    # The robust value band is mean +/- CONTOUR_STD_DEV_LIMIT * std (clamped at
+    # 0 below). Iso-surfaces are drawn ONLY in the bottom CONTOUR_VALLEY_FRAC of
+    # that band (valleys) and the top (1 - CONTOUR_PEAK_FRAC) of it (peaks); the
+    # middle band is deliberately skipped so the field is "see-through".
+    # CONTOUR_LEVELS_PER_BAND iso-values are spread across each of the two bands.
+    CONTOUR_STD_DEV_LIMIT = 2.0
+    CONTOUR_VALLEY_FRAC = 0.3
+    CONTOUR_PEAK_FRAC = 0.7
+    CONTOUR_LEVELS_PER_BAND = 7
+
 class PhysicalConfig:
     """物理演算に関する定数"""
     SPEED_OF_SOUND = 343.0

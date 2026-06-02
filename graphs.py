@@ -111,7 +111,7 @@ class Plot2DWidget(FigureCanvasQTAgg):
 
     # -- right subplot: 1D frequency response ----------------------------
     def update_freq_response(self, room, spk1, spk2, mic, num_src, corr_mode, current_freq,
-                             smoothing=False):
+                             smoothing=False, mode_freqs=None):
         ax = self.ax_freq
         ax.clear()
         self._style(ax, "Frequency Response", "Frequency [Hz]", "Relative SPL [dB]")
@@ -121,6 +121,15 @@ class Plot2DWidget(FigureCanvasQTAgg):
             smoothing=smoothing,
         )
         self._db = db
+
+        # Room-mode guide lines — subtle vertical references drawn behind
+        # the response curve (zorder=1) and the red marker (zorder=2).
+        if mode_freqs:
+            fmin, fmax = self._freqs[0], self._freqs[-1]
+            for mf in mode_freqs:
+                if fmin <= mf <= fmax:
+                    ax.axvline(mf, color="#777", lw=0.6, alpha=0.4, zorder=1)
+
         ax.plot(self._freqs, db, color=RESP_COLOR, lw=1.5)
         ax.grid(True, color=GRID, lw=0.5, alpha=0.5)
 
@@ -159,20 +168,20 @@ class Plot2DWidget(FigureCanvasQTAgg):
 
     # -- combined entry point --------------------------------------------
     def update_all(self, room, spk1, spk2, mic, num_src, corr_mode, current_freq,
-                   recompute_response=True, smoothing=False):
+                   recompute_response=True, smoothing=False, mode_freqs=None):
         """Update the 2D plots.
 
         recompute_response=True  -> redraw layout + recompute the response curve
                                     (use when geometry / sources / walls change).
         recompute_response=False -> only move the frequency marker line
                                     (use when ONLY the frequency slider moves).
-        ``smoothing`` is forwarded to the response recompute (ignored when only
-        the marker moves).
+        ``smoothing`` and ``mode_freqs`` are forwarded to the response recompute
+        (ignored when only the marker moves).
         """
         if recompute_response:
             self.update_top_down(room, spk1, spk2, mic, num_src)
             self.update_freq_response(room, spk1, spk2, mic, num_src, corr_mode, current_freq,
-                                      smoothing=smoothing)
+                                      smoothing=smoothing, mode_freqs=mode_freqs)
             self.draw()
         else:
             self.update_freq_marker(current_freq)

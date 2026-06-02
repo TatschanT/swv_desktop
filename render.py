@@ -2,10 +2,20 @@
 
 ``Render3D`` wraps a ``pyvistaqt.QtInteractor`` and renders the standing-wave
 pressure magnitude as a volume inside the room box. The key design rule is that
-updates happen strictly IN PLACE: every actor (volume, floor, outline, markers,
-cube-axes, scalar bar) is created exactly once, and ``update_mesh`` only mutates
-their data before calling ``plotter.render()``. Nothing is ever cleared or
-re-added, so the user's camera (zoom / rotation / pan) is fully preserved.
+updates happen strictly IN PLACE: every actor (volume, contour, floor, outline,
+markers, cube-axes, scalar bar) is created exactly once, and ``update_mesh``
+only mutates their data before calling ``plotter.render()``. Nothing is ever
+cleared or re-added, so the user's camera (zoom / rotation / pan) is fully
+preserved.
+
+Render modes (V1.1 Feature 2):
+  * Volume  - dense, full-information volumetric map (default).
+  * Contour - "Clear Visibility" iso-surfaces drawn only in the statistical
+              valley/peak bands (see config.AppDefaults.CONTOUR_*), so the
+              field reads as a transparent set of shells you can see through.
+Switching modes only toggles ``actor.SetVisibility(...)`` (and hides the X-ray
+markers in contour mode) -- it never clears/re-adds actors, so the camera is
+preserved exactly as in V1.0.
 
 Phase 3.5 visual polish:
   * X-ray markers  - speaker/mic spheres live in a layer-1 overlay renderer so
@@ -45,6 +55,11 @@ FLOOR_RES = 8
 # yellow -> red" spectrum. High pressure (anti-nodes) stays fully opaque (1.0)
 # so reds saturate to match the scalar bar.
 OPACITY_TF = [0.3, 0.4, 0.55, 0.75, 1.0]
+
+# Per-surface opacity for the contour ("Clear Visibility") render mode. Kept low
+# so the nested valley/peak shells stay translucent and you can see through to
+# the markers / room interior, matching the original Streamlit look.
+CONTOUR_OPACITY = 0.45
 
 # Print tensor min/max each update for debugging the data pipeline.
 DEBUG = False
@@ -106,6 +121,24 @@ class Render3D:
         # mapper's input to self.grid itself makes geometry edits propagate too.
         self._vol_mapper = self.vol_actor.GetMapper()
         self._vol_mapper.SetInputData(self.grid)
+
+        # ---- Contour ("Clear Visibility") representation ----------------
+        # Created EXACTLY ONCE alongside the volume. Mode switching only flips
+        # actor visibility (never add/remove), so the camera is preserved. The
+        # iso-surface geometry is regenerated in place via copy_from() whenever
+        # contour mode is active (see _update_contour). Mapped with the SAME
+        # jet/clim=[0,1] as the volume so the two modes are visually consistent.
+        self.contour_mode = False
+        self.contour_mesh = self.grid.contour(
+            isosurfaces=self._contour_levels(self.grid.point_data[self.SCALARS]) or [0.5],
+            scalars=self.SCALARS,
+        )
+        self.contour_actor = self.plotter.add_mesh(
+            self.contour_mesh, scalars=self.SCALARS, cmap="jet",
+            clim=[0.0, 1.0], opacity=CONTOUR_OPACITY, show_scalar_bar=False,
+            smooth_shading=True,
+        )
+        self.contour_actor.SetVisibility(False)   # volume is the default mode
 
         # ---- Checkerboard floor at Z=0 (resizes with the room) ----------
         # Solid (opacity 1.0), high-contrast light-gray / dark-blue tiles so the
@@ -237,6 +270,88 @@ class Render3D:
             return np.zeros_like(values, dtype=np.float32)
         return ((values - lo) / (hi - lo)).astype(np.float32)
 
+    # -- contour ("Clear Visibility") helpers ---------------------------
+    @staticmethod
+    def _contour_levels(scalars) -> list:
+        """Compute iso-surface levels via the statistical-scaling rule.
+
+        Ported from old_src/render.py: build a robust value band
+        ``mean +/- LIMIT*std`` (clamped at 0), then return iso-values spread
+        across only the bottom ``VALLEY_FRAC`` of that band (valleys) and the
+        top ``(1 - PEAK_FRAC)`` of it (peaks). The middle band is skipped, which
+        is what makes the field "see-through". Returns ``[]`` for a degenerate
+        (flat) field so the caller can render nothing.
+        """
+        D = app_config.AppDefaults
+        s = np.asarray(scalars, dtype=np.float64)
+        smin, smax = float(s.min()), float(s.max())
+        if smax - smin < 1e-9:
+            return []
+
+        mean, std = float(s.mean()), float(s.std())
+        robust_min = max(0.0, mean - D.CONTOUR_STD_DEV_LIMIT * std)
+        robust_max = mean + D.CONTOUR_STD_DEV_LIMIT * std
+        span = robust_max - robust_min
+        if span <= 1e-9:
+            return []
+
+        n = D.CONTOUR_LEVELS_PER_BAND
+        valley_hi = robust_min + span * D.CONTOUR_VALLEY_FRAC
+        peak_lo = robust_min + span * D.CONTOUR_PEAK_FRAC
+        valleys = np.linspace(smin, valley_hi, n)
+        peaks = np.linspace(peak_lo, smax, n)
+
+        # Dedupe + sort, and drop anything outside the data range (out-of-range
+        # iso-values would just yield empty surfaces).
+        levels = np.unique(np.concatenate([valleys, peaks]))
+        levels = levels[(levels >= smin) & (levels <= smax)]
+        return levels.tolist()
+
+    def _update_contour(self):
+        """Regenerate the iso-surface geometry from the CURRENT grid scalars and
+        push it into the persistent ``contour_mesh`` IN PLACE via copy_from().
+
+        Like the floor/outline/marker pattern, the actor's mapper keeps pointing
+        at ``self.contour_mesh``, so mutating it in place reaches the screen
+        without any add/remove -- preserving the camera.
+        """
+        levels = self._contour_levels(self.grid.point_data[self.SCALARS])
+        if not levels:
+            # Flat field -> no surfaces; empty the mesh so nothing draws.
+            self.contour_mesh.copy_from(pv.PolyData())
+            return
+        contoured = self.grid.contour(isosurfaces=levels, scalars=self.SCALARS)
+        self.contour_mesh.copy_from(contoured)
+        if self.contour_mesh.n_points and self.SCALARS in self.contour_mesh.point_data:
+            self.contour_mesh.set_active_scalars(self.SCALARS)
+
+    def _apply_visibility(self, num_src):
+        """Set actor visibility for the current render mode.
+
+        Only the field representation swaps: volume in volume mode, contour
+        shells in contour mode. The equipment markers stay visible in BOTH modes
+        (contour mode is transparent enough that the markers read cleanly), with
+        Speaker 2 shown only when there are two sources.
+        """
+        contour = self.contour_mode
+        self.vol_actor.SetVisibility(not contour)
+        self.contour_actor.SetVisibility(contour)
+        self.spk1_actor.SetVisibility(True)
+        self.mic_actor.SetVisibility(True)
+        self.spk2_actor.SetVisibility(num_src == 2)
+
+    def set_render_mode(self, contour_mode, num_src):
+        """Switch between volume and contour rendering WITHOUT a physics
+        recompute. The pressure field already lives in ``self.grid``; we only
+        (re)generate the iso-surfaces when contour mode is active and flip
+        visibility. No clear()/add/remove -> the camera is preserved.
+        """
+        self.contour_mode = bool(contour_mode)
+        if self.contour_mode:
+            self._update_contour()
+        self._apply_visibility(num_src)
+        self.plotter.render()
+
     # -- the in-place update --------------------------------------------
     def update_mesh(self, room, spk1, spk2, mic, num_src, corr_mode, freq):
         """Recompute the pressure field for ``freq`` and update everything in
@@ -281,12 +396,19 @@ class Render3D:
         self.grid.GetPointData().GetScalars().Modified()
         self.grid.Modified()
 
-        # 4. Move the equipment markers in place; hide Speaker 2 in mono.
+        # 3b. Contour shells follow the field, but ONLY when contour mode is
+        #     active -- skip the iso-surface generation entirely in volume mode.
+        if self.contour_mode:
+            self._update_contour()
+
+        # 4. Move the equipment markers in place. Visibility (volume vs. contour,
+        #    Speaker-2-in-mono, and hiding the markers in contour mode) is applied
+        #    centrally by _apply_visibility below.
         self.spk1_marker.copy_from(self._sphere(spk1.x, spk1.y, spk1.z))
         self.mic_marker.copy_from(self._sphere(mic.x, mic.y, mic.z))
-        self.spk2_actor.SetVisibility(bool(num_src == 2))
         if num_src == 2:
             self.spk2_marker.copy_from(self._sphere(spk2.x, spk2.y, spk2.z))
+        self._apply_visibility(num_src)
 
         # 5. Camera. Normally we DON'T touch it (so zoom/rotation/pan are
         #    preserved across frequency / speaker changes). But when the room

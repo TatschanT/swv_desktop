@@ -32,7 +32,7 @@ If it proves useful to anyone out there, I couldn’t be happier.
 - `PySide6`
 - `pyvista`
 - `pyvistaqt`
-- `matplotlib`
+- `matplotlib` 
 - `numpy`
 
 ### Running the App (Local)

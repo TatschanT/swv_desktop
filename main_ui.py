@@ -494,11 +494,16 @@ class MainWindow(QMainWindow):
         corr = self._corr_mode()
         freq = self.freq_slider.value()
 
+        mode_freqs = None
+        if self.show_modes_chk.isChecked():
+            mode_freqs = [f for f, _, _ in physics.calc_room_modes(room)]
+
         self.render3d.update_mesh(room, spk1, spk2, mic, num_src, corr, freq)
         self.plot2d.update_all(
             room, spk1, spk2, mic, num_src, corr, freq,
             recompute_response=recompute_response,
             smoothing=self.smoothing_chk.isChecked(),
+            mode_freqs=mode_freqs,
         )
 
     # ---- Frequency slider --------------------------------------------
@@ -526,6 +531,17 @@ class MainWindow(QMainWindow):
         """Slider released / value typed / combo changed: recompute the field
         and the 2D response curve exactly once, regardless of the toggle."""
         self._refresh(recompute_response=True)
+
+    def _on_render_mode_changed(self, *_):
+        """Switch the 3D view between volume and contour rendering.
+
+        The pressure field and the 2D response are unchanged, so this is a
+        lightweight 3D-only path: it regenerates the iso-surfaces from the
+        EXISTING field and flips actor visibility (no physics recompute, no 2D
+        redraw). Camera is preserved -- ``set_render_mode`` only does
+        SetVisibility + in-place copy_from."""
+        num_src = 2 if self.source_combo.currentText() == "2" else 1
+        self.render3d.set_render_mode(self.contour_chk.isChecked(), num_src)
 
     def _on_reset_view(self):
         """Forcefully restore the default isometric view of the current room.
@@ -668,8 +684,12 @@ class MainWindow(QMainWindow):
 
         self.reset_view_btn.clicked.connect(self._on_reset_view)
 
-        # Spatial smoothing is a discrete commit -> full response recompute.
+        # Both 2D-graph toggles are discrete commits -> full response recompute.
+        self.show_modes_chk.toggled.connect(self._on_param_committed)
         self.smoothing_chk.toggled.connect(self._on_param_committed)
+
+        # 3D render-mode toggle: lightweight 3D-only path (no physics / no 2D).
+        self.contour_chk.toggled.connect(self._on_render_mode_changed)
 
         # Export current state to CSV.
         self.export_btn.clicked.connect(self.on_export_clicked)
@@ -697,12 +717,14 @@ class MainWindow(QMainWindow):
         self.plot2d = Plot2DWidget(panel)
         top_lay.addWidget(self.plot2d, stretch=1)
 
-        # Spatial-smoothing toggle in the bottom-right of the 2D-graph panel.
-        # Toggling it requires a full response recompute, so the controller
-        # wires it into the commit path (see _wire_3d_signals).
+        # Toggle row at the bottom-right of the 2D-graph panel.
+        # Both toggles are discrete commits -> wired in _wire_3d_signals.
         smooth_row = QHBoxLayout()
         smooth_row.setContentsMargins(0, 0, 0, 0)
         smooth_row.addStretch()
+        self.show_modes_chk = QCheckBox("Show room modes")
+        self.show_modes_chk.setFont(mono(9, bold=True))
+        smooth_row.addWidget(self.show_modes_chk)
         self.smoothing_chk = QCheckBox("Spatial Smoothing")
         self.smoothing_chk.setFont(mono(9, bold=True))
         smooth_row.addWidget(self.smoothing_chk)
@@ -730,6 +752,12 @@ class MainWindow(QMainWindow):
         # Toggle and action controls bottom-right
         toggles = QHBoxLayout()
         toggles.addStretch()
+        # 3D render-mode switch: volume (dense) vs. contour ("clear visibility").
+        # Toggling it neither changes the physics nor the 2D response, so it is
+        # routed to a lightweight 3D-only handler (see _wire_3d_signals).
+        self.contour_chk = QCheckBox("Contour Mode")
+        self.contour_chk.setFont(mono(9, bold=True))
+        toggles.addWidget(self.contour_chk)
         self.dynamic_chk = QCheckBox("Dynamic update")
         self.dynamic_chk.setFont(mono(9, bold=True))
         toggles.addWidget(self.dynamic_chk)
