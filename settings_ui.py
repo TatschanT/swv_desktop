@@ -35,11 +35,10 @@ from PySide6.QtWidgets import (
 
 import config as app_config
 
-# Persisted settings live next to this module so the location is stable
-# regardless of the process working directory.
-SETTINGS_PATH = os.path.join(
-    os.path.dirname(os.path.abspath(__file__)), "settings.json"
-)
+# settings.json is user-writable: use get_user_data_path so it lands next to
+# the .exe in a frozen build (sys._MEIPASS is deleted on exit, so it can't live
+# there) and in the working directory in script mode.
+SETTINGS_PATH = app_config.get_user_data_path("settings.json")
 
 _INT = "int"
 _FLOAT = "float"

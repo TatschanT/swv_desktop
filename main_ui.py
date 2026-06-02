@@ -789,9 +789,7 @@ class MainWindow(QMainWindow):
         banner_label.setFixedHeight(BANNER_H)
         banner_label.setAlignment(Qt.AlignCenter)
         banner_label.setStyleSheet("background-color: #b1b2b5;")
-        logo_path = os.path.join(
-            os.path.dirname(os.path.abspath(__file__)), "images", "SWVlogo_s.jpg"
-        )
+        logo_path = app_config.get_resource_path(os.path.join("images", "SWVlogo_s.jpg"))
         pixmap = QPixmap(logo_path)
         if not pixmap.isNull():
             banner_label.setPixmap(

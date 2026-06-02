@@ -1,4 +1,33 @@
+import os
+import sys
+
 import numpy as np
+
+
+def get_resource_path(relative_path: str) -> str:
+    """Absolute path to a bundled read-only asset (image, etc.).
+
+    When running as a PyInstaller .exe, assets are extracted to sys._MEIPASS.
+    In normal script mode, falls back to the current working directory.
+    """
+    if hasattr(sys, "_MEIPASS"):
+        base = sys._MEIPASS
+    else:
+        base = os.path.abspath(".")
+    return os.path.join(base, relative_path)
+
+
+def get_user_data_path(filename: str) -> str:
+    """Absolute path for a read/write user-data file (e.g., settings.json).
+
+    In a frozen .exe, writes land next to the executable (not in _MEIPASS,
+    which is deleted on exit). In script mode, uses the current directory.
+    """
+    if getattr(sys, "frozen", False):
+        base = os.path.dirname(sys.executable)
+    else:
+        base = os.path.abspath(".")
+    return os.path.join(base, filename)
 
 class AppDefaults:
     """アプリケーションの初期状態やUIに関する設定"""
