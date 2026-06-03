@@ -77,10 +77,12 @@ def get_psi(n: int, pos: float, L: float, R: float) -> complex:
     if n == 0: return 1.0 + 0j
     theta = n * np.pi * pos / L
 
-    # [FIX] True Complex Field の非対称性アーティファクトを解消
-    # 従来の片側基準の位相違いを、部屋の中心(L/2)を基準とする対称放射モデルへ変更
+    # Symmetric radiation model referenced to the room center (L/2). This avoids
+    # the asymmetry artifact in the True Complex Field mode that a one-sided
+    # phase reference produced.
     beta = (1.0 - R) / (1.0 + R)
-    center_offset = (pos - L / 2.0) / (L / 2.0)  # x=0で-1, 中心で0, x=Lで1 となる対称スケーラー
+    # Symmetric scaler: -1 at x=0, 0 at the center, +1 at x=L.
+    center_offset = (pos - L / 2.0) / (L / 2.0)
 
     return np.cos(theta) - 1j * beta * center_offset * np.sin(theta)
 

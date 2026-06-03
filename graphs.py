@@ -122,7 +122,7 @@ class Plot2DWidget(FigureCanvasQTAgg):
         )
         self._db = db
 
-        # Room-mode guide lines — subtle vertical references drawn behind
+        # Room-mode guide lines - subtle vertical references drawn behind
         # the response curve (zorder=1) and the red marker (zorder=2).
         if mode_freqs:
             fmin, fmax = self._freqs[0], self._freqs[-1]

@@ -44,7 +44,7 @@ If it proves useful to anyone out there, I couldn’t be happier.
    ```
 4. Run the application:
    ```bash
-   python main_ui.py
+   python main.py
    ```
 
 **Linux / Wayland Note:** 

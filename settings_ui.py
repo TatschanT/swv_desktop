@@ -8,19 +8,19 @@ State model
 Applying the dialog mutates the live ``config`` class attributes in place.
 Because the physics and view layers read those attributes at call time (never
 caching them at import), the new values take effect on the next recompute. The
-values are also persisted to ``settings.json`` next to this module so they
-survive a restart; on startup ``load_settings`` re-applies them before the UI is
-built.
+values are also persisted to ``settings.json`` (resolved via
+``config.get_user_data_path`` so it sits next to the executable in a frozen
+build) so they survive a restart; on startup ``load_settings`` re-applies them
+before the UI is built.
 
 Separation of concerns
 -----------------------
 The dialog deliberately knows nothing about recomputation. After mutating config
-it emits ``settings_applied``; the controller (``main_ui``) connects to that
+it emits ``settings_applied``; the controller (``main``) connects to that
 signal and performs the appropriate grid/freq-axis rebuild and view refresh.
 """
 
 import json
-import os
 
 from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (

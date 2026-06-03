@@ -150,7 +150,7 @@ Additionally, `_sync_symmetry` is also triggered by `room.x.valueChanged` becaus
 
 ### 2.8 PyInstaller Path Resolution (V1.1)
 
-Two helpers live at the top of `config.py` (imported by `main_ui.py` and `settings_ui.py`):
+Two helpers live at the top of `config.py` (imported by `main.py` and `settings_ui.py`):
 
 | Helper | When to use | How it works |
 |--------|------------|--------------|
@@ -165,7 +165,7 @@ Two helpers live at the top of `config.py` (imported by `main_ui.py` and `settin
 
 ```
 swv_desktop/
-├── main_ui.py      # Controller + View skeleton
+├── main.py      # Controller + View skeleton
 │                   #   MainWindow, LabeledSlider, XYZSliders
 │                   #   Signal wiring, _refresh(), _on_render_mode_changed()
 │                   #   symmetry logic, export, settings dialog opener
@@ -223,7 +223,7 @@ swv_desktop/
 All five polish TODOs from the V1.0 session are **done, wired, and verified**.
 
 ### TODO 1 — Spatial Smoothing Toggle ✅
-`QCheckBox("Spatial Smoothing")` lives in the **bottom-right toggle row of the top-center 2D-graph panel** (`main_ui.py`, in `_build_center`). State is owned by the controller and threaded into `Plot2DWidget.update_all(..., smoothing=)` → `update_freq_response(..., smoothing=)`. Toggling fires `_on_param_committed` (a discrete commit → one full response recompute).
+`QCheckBox("Spatial Smoothing")` lives in the **bottom-right toggle row of the top-center 2D-graph panel** (`main.py`, in `_build_center`). State is owned by the controller and threaded into `Plot2DWidget.update_all(..., smoothing=)` → `update_freq_response(..., smoothing=)`. Toggling fires `_on_param_committed` (a discrete commit → one full response recompute).
 - **Strength tuning:** the original ±0.1 m / 27-sample cube was too weak. Smoothing now samples a configurable cube via `SimResolution.SMOOTHING_RADIUS` (default 0.3 m) × `SMOOTHING_SAMPLES` (default 5 → 5³ = 125 points), `np.linspace(-r, r, n)` so the center point is included. Measured effect: peak-to-trough range ~18 dB → ~11 dB.
 
 ### TODO 2 — "Reset View" Button ✅
@@ -236,7 +236,7 @@ plotter.update()                                      # QtInteractor: flush Qt r
 **Gotcha learned:** `plotter.render()` is only a VTK draw; a standalone button click needs `plotter.update()` (which runs `processEvents()`) to actually repaint the embedded widget.
 
 ### TODO 3 — "Export Data" Button ✅
-`on_export_clicked()` in `main_ui.py`: `QFileDialog.getSaveFileName` (timestamped default `swv_export_YYYYMMDD_HHMMSS.csv`, cancel-safe, auto-appends `.csv`). Writes three labelled CSV sections — **[Parameters]**, **[Frequency Response]**, **[Room Modes]**. I/O wrapped in `try/except OSError` with `QMessageBox` success/failure feedback.
+`on_export_clicked()` in `main.py`: `QFileDialog.getSaveFileName` (timestamped default `swv_export_YYYYMMDD_HHMMSS.csv`, cancel-safe, auto-appends `.csv`). Writes three labelled CSV sections — **[Parameters]**, **[Frequency Response]**, **[Room Modes]**. I/O wrapped in `try/except OSError` with `QMessageBox` success/failure feedback.
 
 ### TODO 4 — Settings Dialog ✅ (file `settings_ui.py`)
 `SettingsDialog(QDialog)` extracted to its own module. Exposes `SPEED_OF_SOUND`, `MAX_CALC_FREQ`, `FREQ_1D_START/END/STEP`, `GRID_SIZE_NORMAL`, `SMOOTHING_RADIUS`, `SMOOTHING_SAMPLES` via spin boxes. **State model:** mutates live `config` attributes in place AND persists to `settings.json` via `get_user_data_path`. `load_settings()` runs at the top of `MainWindow.__init__`. The dialog emits `settings_applied`; the controller's `_on_settings_applied` performs rebuilds + one refresh.
@@ -257,7 +257,7 @@ Placeholder replaced with a `QLabel` showing `images/SWVlogo_s.jpg` via `QPixmap
 ### Feature 1 — Room Mode Frequency Lines on the 2D Frequency Response ✅
 
 **What was added:**
-- `QCheckBox("Show room modes")` placed to the left of the existing `QCheckBox("Spatial Smoothing")` in the shared toggle row at the bottom-right of the 2D-graph panel (`main_ui.py`, `_build_center`).
+- `QCheckBox("Show room modes")` placed to the left of the existing `QCheckBox("Spatial Smoothing")` in the shared toggle row at the bottom-right of the 2D-graph panel (`main.py`, `_build_center`).
 - Toggling fires `_on_param_committed` — same discrete-commit lane as `smoothing_chk`.
 
 **Signal flow:**
@@ -324,7 +324,7 @@ def get_user_data_path(filename: str) -> str:
 ```
 
 **Applied in:**
-- `main_ui.py` — logo: `app_config.get_resource_path(os.path.join("images", "SWVlogo_s.jpg"))`.
+- `main.py` — logo: `app_config.get_resource_path(os.path.join("images", "SWVlogo_s.jpg"))`.
 - `settings_ui.py` — `SETTINGS_PATH = app_config.get_user_data_path("settings.json")`.
 
 **Why the split:** `sys._MEIPASS` is a temporary extraction directory deleted on `.exe` exit — files written there are lost. `settings.json` must live next to the executable; logo is read-only so `_MEIPASS` is correct for it.
@@ -335,10 +335,10 @@ def get_user_data_path(filename: str) -> str:
 
 ```bash
 cd /home/ttatsuta/Projects/swv_desktop
-.venv/bin/python main_ui.py
+.venv/bin/python main.py
 ```
 
-`QT_QPA_PLATFORM=xcb` is set inside `main_ui.py` (Wayland fix). No additional flags needed.
+`QT_QPA_PLATFORM=xcb` is set inside `main.py` (Wayland fix). No additional flags needed.
 
 **Note on headless verification:** `pyvistaqt.QtInteractor` needs a real display (it X-errors under `QT_QPA_PLATFORM=offscreen`, and no `xvfb` is installed in this env). Physics/config/logic can be unit-tested headlessly, but **3D visual behavior (camera, ghosting, render modes, contour shells) must be eyeballed interactively.**
 

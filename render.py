@@ -3,26 +3,24 @@
 ``Render3D`` wraps a ``pyvistaqt.QtInteractor`` and renders the standing-wave
 pressure magnitude as a volume inside the room box. The key design rule is that
 updates happen strictly IN PLACE: every actor (volume, contour, floor, outline,
-markers, cube-axes, scalar bar) is created exactly once, and ``update_mesh``
-only mutates their data before calling ``plotter.render()``. Nothing is ever
-cleared or re-added, so the user's camera (zoom / rotation / pan) is fully
-preserved.
+markers, cube-axes) is created exactly once, and ``update_mesh`` only mutates
+their data before calling ``plotter.render()``. Nothing is ever cleared or
+re-added, so the user's camera (zoom / rotation / pan) is fully preserved.
 
-Render modes (V1.1 Feature 2):
+Render modes (Volume vs. Contour):
   * Volume  - dense, full-information volumetric map (default).
   * Contour - "Clear Visibility" iso-surfaces drawn only in the statistical
               valley/peak bands (see config.AppDefaults.CONTOUR_*), so the
               field reads as a transparent set of shells you can see through.
-Switching modes only toggles ``actor.SetVisibility(...)`` (and hides the X-ray
-markers in contour mode) -- it never clears/re-adds actors, so the camera is
-preserved exactly as in V1.0.
+Switching modes only toggles ``actor.SetVisibility(...)`` -- it never
+clears/re-adds actors, so the camera is preserved. The speaker/mic markers stay
+visible in both modes.
 
-Phase 3.5 visual polish:
-  * X-ray markers  - speaker/mic spheres live in a layer-1 overlay renderer so
+Supporting actors:
+  * X-ray markers  - speaker/mic spheres live in a top-layer overlay renderer so
                      they always draw *over* the volume, even when buried inside
                      a dense pressure field.
-  * Floor grid     - a translucent gridded plane at Z=0 (resizes with the room).
-  * Scalar bar     - a vertical "Normalized Pressure" gauge over the [0,1] range.
+  * Floor grid     - a checkerboard plane at Z=0 (resizes with the room).
   * Cube axes      - show_bounds() frames the space; bounds update with the room.
 """
 
@@ -53,16 +51,13 @@ FLOOR_RES = 8
 # background through jet's dark-navy low end. Without this floor the volume
 # reads as "black -> green -> red" rather than the full "blue -> green ->
 # yellow -> red" spectrum. High pressure (anti-nodes) stays fully opaque (1.0)
-# so reds saturate to match the scalar bar.
+# so reds saturate at the high end.
 OPACITY_TF = [0.3, 0.4, 0.55, 0.75, 1.0]
 
 # Per-surface opacity for the contour ("Clear Visibility") render mode. Kept low
 # so the nested valley/peak shells stay translucent and you can see through to
 # the markers / room interior, matching the original Streamlit look.
 CONTOUR_OPACITY = 0.45
-
-# Print tensor min/max each update for debugging the data pipeline.
-DEBUG = False
 
 
 class Render3D:
@@ -361,10 +356,6 @@ class Render3D:
         pressure = physics.calc_tensor_space(
             room, spk1, spk2, num_src, corr_mode, freq, grid_size=self.grid_size
         )
-        if DEBUG:
-            print(f"[Render3D] Tensor min: {np.min(pressure):.6g}, "
-                  f"max: {np.max(pressure):.6g}, mean: {np.mean(pressure):.6g}")
-
         scalars = self._normalize(pressure.ravel(order="F"))
 
         # 2. Geometry follows the room. The point count (extent) is fixed, only

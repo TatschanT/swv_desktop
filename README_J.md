@@ -50,7 +50,7 @@ Streamlitバージョンにあったオペレーションモードは廃止さ�
    ```
 4. アプリを起動します:
    ```bash
-   python main_ui.py
+   python main.py
    ```
 
 **Linux / Wayland Note:** 
