@@ -1,5 +1,7 @@
 import os
-os.environ["QT_QPA_PLATFORM"] = "xcb"  # Wayland fix
+import platform
+if platform.system() == "Linux":
+    os.environ["QT_QPA_PLATFORM"] = "xcb"
 
 import csv
 import sys
