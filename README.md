@@ -27,8 +27,10 @@ If it proves useful to anyone out there, I couldn’t be happier.
 
 ## 🛠️ Installation & Usage
 
-### Please download the Windows build from [Release](https://github.com/TatschanT/swv_desktop/releases/tag/V1.1.0). Extract it to any folder and run SWV.exe.
+### Windows
+Please download the Windows build from [Release](https://github.com/TatschanT/swv_desktop/releases/tag/V1.1.0). Extract it to any folder and run SWV.exe.
 
+### Running on a local environment on Mac and Linux 
 ### Prerequisites
 - Python 3.10+ (Tested with Python 3.14/3.10)
 - `PySide6`
@@ -50,7 +52,7 @@ If it proves useful to anyone out there, I couldn’t be happier.
    ```
 
 **Linux / Wayland Note:** 
-If you are using a Linux distribution with Wayland (e.g., Fedora), VTK might have compatibility issues. The application handles this internally by forcing X11 mode (`QT_QPA_PLATFORM="xcb"`), so no extra launch flags are needed.
+If you are using a Linux distribution with Wayland (e.g., Fedora), VTK might have compatibility issues. The application handles this internally by forcing X11 mode (`QT_QPA_PLATFORM="xcb"`) on Linux, so no extra launch flags are needed.
 
 ---
 Disclaimer

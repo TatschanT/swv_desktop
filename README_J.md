@@ -33,8 +33,10 @@ Streamlitバージョンにあったオペレーションモードは廃止さ�
 
 ## 🛠️ インストールと実行方法
 
-### Windows用のビルドは[Release](https://github.com/TatschanT/swv_desktop/releases/tag/V1.1.0)からダウンロードしてください。任意のフォルダに解凍し、SWV.exeを実行してください。
+### Windows
+Windows用のビルドは[Release](https://github.com/TatschanT/swv_desktop/releases/tag/V1.1.0)からダウンロードしてください。任意のフォルダに解凍し、SWV.exeを実行してください。
 
+### MacおよびLinuxのローカル環境での実行 
 ### 必要環境
 - Python 3.10+ (Python 3.14/3.10はテスト済み)
 - `PySide6`
@@ -56,7 +58,7 @@ Streamlitバージョンにあったオペレーションモードは廃止さ�
    ```
 
 **Linux / Wayland Note:** 
-レンダリングに使用されているVTKの互換性制限のため、Wayland環境のLinux（Fedoraなど）では注意が必要です。現状はX11モードに強制する形でこの問題を回避しています(`QT_QPA_PLATFORM="xcb"`)ので、追加の対策は必要ありません。
+レンダリングに使用されているVTKの互換性制限のため、Wayland環境のLinux（Fedoraなど）では注意が必要です。現状はLinux環境においてはX11モードに強制する形でこの問題を回避しています(`QT_QPA_PLATFORM="xcb"`)ので、追加の対策は必要ありません。
 
 ---
 免責事項
