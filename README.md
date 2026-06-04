@@ -22,6 +22,16 @@ If it proves useful to anyone out there, I couldn’t be happier.
 - **Data Export**: Export your room configurations, frequency response data, and complete room modes directly to a CSV file.
 - **Live Settings Tuning**: Dynamically adjust simulation resolutions, grid sizes, and the speed of sound via the built-in Settings dialog without restarting the application.
 
+## 🚀 3D View Controls
+- When **Contour mode** is enabled, the sound pressure distribution display switches to contour mode, providing a clearer view (though the amount of information displayed decreases)
+- When you turn on **Dynamic mode toggle**, the sound pressure distribution follows all parameter adjustments (requires power)
+- **Reset View**: Returns the camera to its initial position.
+- **Basic Mouse Operations**
+  - Moving the mouse while holding down the left mouse button rotates the view.
+  - Moving the mouse up or down while holding the right mouse button zooms in or out. Scrolling the mouse wheel also zooms in or out.
+  - Moving the mouse while clicking the scroll wheel pans the view horizontally. Holding down the Shift key while moving the mouse has the same effect.
+  - Holding down the Ctrl key while moving the mouse allows you to rotate the view horizontally around the center of the screen.
+
 ## Screenshot
 ![Standing Wave Viewer image](images/swvdesktopss.jpg)
 
