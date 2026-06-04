@@ -27,6 +27,8 @@ If it proves useful to anyone out there, I couldn’t be happier.
 
 ## 🛠️ Installation & Usage
 
+### Please download the Windows build from [Release](https://github.com/TatschanT/swv_desktop/releases/tag/V1.1.0). Extract it to any folder and run SWV.exe.
+
 ### Prerequisites
 - Python 3.10+ (Tested with Python 3.14/3.10)
 - `PySide6`

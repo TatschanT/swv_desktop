@@ -33,6 +33,8 @@ Streamlitバージョンにあったオペレーションモードは廃止さ�
 
 ## 🛠️ インストールと実行方法
 
+### Windows用のビルドは[Release](https://github.com/TatschanT/swv_desktop/releases/tag/V1.1.0)からダウンロードしてください。任意のフォルダに解凍し、SWV.exeを実行してください。
+
 ### 必要環境
 - Python 3.10+ (Python 3.14/3.10はテスト済み)
 - `PySide6`
