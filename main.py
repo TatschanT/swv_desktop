@@ -1,7 +1,10 @@
 import os
 import platform
+
 if platform.system() == "Linux":
     os.environ["QT_QPA_PLATFORM"] = "xcb"
+# Hotfix to prevent window scaling
+os.environ["QT_ENABLE_HIGHDPI_SCALING"] = "0"
 
 import csv
 import sys
