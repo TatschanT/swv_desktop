@@ -303,15 +303,15 @@ class MainWindow(QMainWindow):
         mode_lay.addWidget(QLabel("Source"), 0, 0)
         self.source_combo = QComboBox()
         self.source_combo.addItems(["1", "2"])
-        self.source_combo.setFont(mono(10))
+        self.source_combo.setFont(mono(9))
         mode_lay.addWidget(self.source_combo, 0, 1)
 
-        mode_lay.addWidget(QLabel("Stereo phase corr."), 1, 0)
+        mode_lay.addWidget(QLabel("Phase correction"), 1, 0)
         self.phase_combo = QComboBox()
         self.phase_combo.addItems(
             ["Uncorrected", "Global cancel", "True complex field"]
         )
-        self.phase_combo.setFont(mono(10))
+        self.phase_combo.setFont(mono(9))
         mode_lay.addWidget(self.phase_combo, 1, 1)
         lay.addWidget(mode_box)
 
@@ -827,15 +827,15 @@ class MainWindow(QMainWindow):
 
         # --- Room modes table ----------------------------------------
         modes_box = QGroupBox("Room modes")
-        modes_box.setFont(mono(10, bold=True))
+        modes_box.setFont(mono(9, bold=True))
         modes_lay = QVBoxLayout(modes_box)
         self.modes_table = QTableWidget(16, 3)
-        self.modes_table.setFont(mono(10))
+        self.modes_table.setFont(mono(9))
         self.modes_table.setHorizontalHeaderLabels(
             ["Hz", "Modes (x, y, z)", "L (m)"]
         )
         self.modes_table.verticalHeader().setVisible(False)
-        self.modes_table.horizontalHeader().setFont(mono(10, bold=True))
+        self.modes_table.horizontalHeader().setFont(mono(9, bold=True))
         self.modes_table.setEditTriggers(QTableWidget.NoEditTriggers)
         # Small breathing room between cell text and the cell borders.
         self.modes_table.setStyleSheet("QTableWidget::item { padding: 1px; }")
@@ -865,12 +865,12 @@ def main():
     app = QApplication(sys.argv)
     app.setFont(mono(10))
     win = MainWindow()
-    win.show()
     try:
         import pyi_splash
         pyi_splash.close()
     except ImportError:
         pass
+    win.show()
     sys.exit(app.exec())
 
 
