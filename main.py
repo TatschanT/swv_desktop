@@ -863,8 +863,14 @@ def main():
     app.setFont(mono(10))
     win = MainWindow()
     win.show()
+    try:
+        import pyi_splash
+        pyi_splash.close()
+    except ImportError:
+        pass
     sys.exit(app.exec())
 
 
 if __name__ == "__main__":
     main()
+ 
