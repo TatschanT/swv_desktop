@@ -57,7 +57,11 @@ def calc_room_modes(room: RoomConfig, max_order: int = 4, max_freq: float = None
 
     modes.sort(key=lambda m: m[0])
     return modes
-
+#Modal weights
+MODE_WEIGHTS = (0.25, 0.5, 1.0, 0.0) 
+def get_mode_weight(nx, ny, nz):
+    zeros_count = (nx == 0) + (ny == 0) + (nz == 0)
+    return MODE_WEIGHTS[zeros_count]
 # ==========================================
 # Core Physics Engine
 # ==========================================
@@ -127,7 +131,8 @@ def compute_f_response_1d(room: RoomConfig, spk1: Position, spk2: Position, mic:
                     if nx == 0 and ny == 0 and nz == 0: continue
                     fn = (app_config.PhysicalConfig.SPEED_OF_SOUND / 2.0) * np.sqrt((nx/Lx)**2 + (ny/Ly)**2 + (nz/Lz)**2)
                     if fn > app_config.PhysicalConfig.MAX_CALC_FREQ: continue
-
+                    # modal energy weighting
+                    mode_weight = get_mode_weight(nx, ny, nz)
                     gamma = calc_gamma(nx, ny, nz, room)
                     psi1 = get_psi(nx, sx, Lx, Rx) * get_psi(ny, sy, Ly, Ry) * get_psi(nz, sz, Lz, Rz)
                     if num_src == 2:
@@ -137,9 +142,9 @@ def compute_f_response_1d(room: RoomConfig, spk1: Position, spk2: Position, mic:
 
                     for i, f_query in enumerate(freqs_1d):
                         res_complex = (app_config.PhysicalConfig.RESONANCE_SCALING / fn) / ((f_query - fn) + 1j * gamma)
-                        P_complex_1_mics[:, i] += psi1 * rec_psis * res_complex
+                        P_complex_1_mics[:, i] += mode_weight * (psi1 * rec_psis * res_complex)
                         if num_src == 2:
-                            P_complex_2_mics[:, i] += psi2 * rec_psis * res_complex
+                            P_complex_2_mics[:, i] += mode_weight * (psi2 * rec_psis * res_complex)
 
         tensor_1d_mics = np.abs(P_complex_1_mics + P_complex_2_mics)
         tensor_1d_avg = np.sqrt(np.mean(tensor_1d_mics ** 2, axis=0))
@@ -153,7 +158,8 @@ def compute_f_response_1d(room: RoomConfig, spk1: Position, spk2: Position, mic:
                     if nx == 0 and ny == 0 and nz == 0: continue
                     fn = (app_config.PhysicalConfig.SPEED_OF_SOUND / 2.0) * np.sqrt((nx/Lx)**2 + (ny/Ly)**2 + (nz/Lz)**2)
                     if fn > app_config.PhysicalConfig.MAX_CALC_FREQ: continue
-
+                    # modal energy weighting
+                    mode_weight = get_mode_weight(nx, ny, nz)
                     psi1 = get_psi(nx, sx, Lx, Rx) * get_psi(ny, sy, Ly, Ry) * get_psi(nz, sz, Lz, Rz)
                     if num_src == 2:
                         psi2 = get_psi(nx, sx2, Lx, Rx) * get_psi(ny, sy2, Ly, Ry) * get_psi(nz, sz2, Lz, Rz)
@@ -164,6 +170,7 @@ def compute_f_response_1d(room: RoomConfig, spk1: Position, spk2: Position, mic:
                     else:
                         exc = np.abs(psi1)
 
+                    exc = exc * mode_weight
                     recs = np.array([calc_shape(nx, m_x, Lx, Rx) * calc_shape(ny, m_y, Ly, Ry) * calc_shape(nz, m_z, Lz, Rz) for m_x, m_y, m_z in zip(mxs, mys, mzs)])
                     gamma = calc_gamma(nx, ny, nz, room)
 
@@ -217,18 +224,19 @@ def compute_tensor_3d(room: RoomConfig, spk1: Position, spk2: Position, num_src:
                         if nx == 0 and ny == 0 and nz == 0: continue
                         fn = (app_config.PhysicalConfig.SPEED_OF_SOUND / 2.0) * np.sqrt((nx/Lx)**2 + (ny/Ly)**2 + (nz/Lz)**2)
                         if fn > app_config.PhysicalConfig.MAX_CALC_FREQ: continue
-
+                        # modal energy weighting
+                        mode_weight = get_mode_weight(nx, ny, nz)
                         gamma = calc_gamma(nx, ny, nz, room)
                         res_complex = (app_config.PhysicalConfig.RESONANCE_SCALING / fn) / ((f_query - fn) + 1j * gamma)
 
                         mode_complex = get_psi(nx, X, Lx, Rx) * get_psi(ny, Y, Ly, Ry) * get_psi(nz, Z, Lz, Rz)
                         psi1 = get_psi(nx, sx, Lx, Rx) * get_psi(ny, sy, Ly, Ry) * get_psi(nz, sz, Lz, Rz)
 
-                        P_complex_1 += psi1 * mode_complex * res_complex
-
+                        P_complex_1 += mode_weight * (psi1 * mode_complex * res_complex)
+                    
                         if num_src == 2:
                             psi2 = get_psi(nx, sx2, Lx, Rx) * get_psi(ny, sy2, Ly, Ry) * get_psi(nz, sz2, Lz, Rz)
-                            P_complex_2 += psi2 * mode_complex * res_complex
+                            P_complex_2 += mode_weight * (psi2 * mode_complex * res_complex)
 
             if num_src == 2:
                 tensor[i] = np.abs(P_complex_1 + P_complex_2)
@@ -241,7 +249,8 @@ def compute_tensor_3d(room: RoomConfig, spk1: Position, spk2: Position, num_src:
                     if nx == 0 and ny == 0 and nz == 0: continue
                     fn = (app_config.PhysicalConfig.SPEED_OF_SOUND / 2.0) * np.sqrt((nx/Lx)**2 + (ny/Ly)**2 + (nz/Lz)**2)
                     if fn > app_config.PhysicalConfig.MAX_CALC_FREQ: continue
-
+                    # modal energy weighting
+                    mode_weight = get_mode_weight(nx, ny, nz)
                     psi1 = get_psi(nx, sx, Lx, Rx) * get_psi(ny, sy, Ly, Ry) * get_psi(nz, sz, Lz, Rz)
                     if num_src == 2:
                         psi2 = get_psi(nx, sx2, Lx, Rx) * get_psi(ny, sy2, Ly, Ry) * get_psi(nz, sz2, Lz, Rz)
@@ -252,6 +261,7 @@ def compute_tensor_3d(room: RoomConfig, spk1: Position, spk2: Position, num_src:
                     else:
                         exc = np.abs(psi1)
 
+                    exc = exc * mode_weight
                     mode_shape = calc_shape(nx, X, Lx, Rx) * calc_shape(ny, Y, Ly, Ry) * calc_shape(nz, Z, Lz, Rz)
                     gamma = calc_gamma(nx, ny, nz, room)
 
