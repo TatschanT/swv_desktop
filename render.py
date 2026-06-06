@@ -162,19 +162,28 @@ class Render3D:
         # ---- Cube-axes framing (bounds updated in place) ---------------
         # all_edges=False: with it True, show_bounds() adds a SEPARATE static
         # bounding-box actor fixed at the initial bounds that SetBounds() never
-        # updates -- so it ghosts when the room shrinks. The box edges are
+        # updates -- so it ghosts when the room shrinks. The box edges arep
         # already drawn (and updated in place) by self.outline above, so the
         # all_edges box is redundant anyway.
         self.cube_axes = self.plotter.show_bounds(
             grid="front", location="outer", all_edges=False,
             color=AXES_COLOR,
             xtitle="X (m)", ytitle="Y (m)", ztitle="Z (m)",
+            axes_ranges=[0, D.LX, 0, D.LY, 0, D.LZ],
+            use_3d_text=False,
         )
 
         self.plotter.add_axes()
 
         # X-ray overlay must be set up after the marker actors exist.
         self._setup_overlay()
+        self.cube_axes.update_bounds(self.grid.bounds)
+        try:
+            self.cube_axes.SetXAxisRange(0, D.LX)
+            self.cube_axes.SetYAxisRange(0, D.LY)
+            self.cube_axes.SetZAxisRange(0, D.LZ)
+        except AttributeError:
+            pass
         self.plotter.reset_camera()
 
     # -- construction helpers -------------------------------------------
@@ -374,9 +383,14 @@ class Render3D:
         self.outline.copy_from(self.grid.outline())
         self.floor.copy_from(self._make_floor(room))
         self.floor.set_active_scalars("checker")   # keep checkerboard mapping
-        # CubeAxesActor must frame the NEW bounds. Modified() forces it to drop
-        # cached geometry so the old (e.g. larger) frame can't linger as a ghost.
-        self.cube_axes.SetBounds(self.grid.bounds)
+        # CubeAxesActor must frame the NEW bounds. update_bounds() (PyVista wrapper)
+        # sets the bounds AND the per-axis display ranges to match, then regenerates
+        # the explicit tick labels from those ranges (np.linspace(min, max, n)). This
+        # is what fixes stale labels; a bare native SetBounds() leaves old labels.
+        # NOTE: this PyVista build (0.48) writes explicit string labels rather than
+        # relying on VTK's native auto-tick generator, so the axes never "round up"
+        # past the room's true extent -- no extra range clamping is needed.
+        self.cube_axes.update_bounds(self.grid.bounds)
         self.cube_axes.Modified()
 
         # 3. Write the new values *into the existing* VTK scalar array (not a
