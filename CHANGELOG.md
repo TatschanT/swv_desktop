@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.1.2] - Minor Visual & VTK Rendering Fixes
+### Fixed
+* **3D Grid Rendering Bug**: Fixed an upstream VTK bug where the 3D bounding box (CubeAxesActor) would incorrectly stretch or fail to draw grid lines for room dimensions under 2.5 meters.
+* **UI Clean-up**: Replaced the distracting axis tick numbers with clean, evenly spaced 4-division grid lines that perfectly scale with any room dimension, dramatically improving the visual clarity of the 3D space.
+
+### Changed / Improved
+* **Mode Energy Weighting**: Overhauled the core physics engine to apply realistic amplitude decay based on mode types. Oblique and Tangential modes now carry less energy than Axial modes, mirroring real-world wall reflections.
+* **Complex Field Accuracy**: Fixed the issue where the "True Complex Field" mode would generate excessive cancellation zones (blue) at high frequencies and unnatural extreme peaks (red) in room corners at low frequencies. The simulation is now substantially more accurate and true to physical acoustics.
+  
 ## [V1.1.1] - 2026-06-05
 ### Added
 - Added a splash screen (`pyi_splash`) during startup to provide visual feedback while heavy libraries (PyVista, PySide6) are loading.
