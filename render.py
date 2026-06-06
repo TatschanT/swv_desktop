@@ -160,30 +160,19 @@ class Render3D:
         self.mic_actor = self._add_marker(self.mic_marker, MIC_COLOR)
 
         # ---- Cube-axes framing (bounds updated in place) ---------------
-        # all_edges=False: with it True, show_bounds() adds a SEPARATE static
-        # bounding-box actor fixed at the initial bounds that SetBounds() never
-        # updates -- so it ghosts when the room shrinks. The box edges arep
-        # already drawn (and updated in place) by self.outline above, so the
-        # all_edges box is redundant anyway.
         self.cube_axes = self.plotter.show_bounds(
             grid="front", location="outer", all_edges=False,
             color=AXES_COLOR,
-            xtitle="X (m)", ytitle="Y (m)", ztitle="Z (m)",
-            axes_ranges=[0, D.LX, 0, D.LY, 0, D.LZ],
-            use_3d_text=False,
+            xtitle="X", ytitle="Y", ztitle="Z",
+            axes_ranges=[0, 4, 0, 4, 0, 4],  # ◀◀ 魔法の4等分レンジ
         )
+        for i in range(3):
+            self.cube_axes.GetLabelTextProperty(i).SetOpacity(0.0)
 
         self.plotter.add_axes()
 
         # X-ray overlay must be set up after the marker actors exist.
         self._setup_overlay()
-        self.cube_axes.update_bounds(self.grid.bounds)
-        try:
-            self.cube_axes.SetXAxisRange(0, D.LX)
-            self.cube_axes.SetYAxisRange(0, D.LY)
-            self.cube_axes.SetZAxisRange(0, D.LZ)
-        except AttributeError:
-            pass
         self.plotter.reset_camera()
 
     # -- construction helpers -------------------------------------------
@@ -390,7 +379,7 @@ class Render3D:
         # NOTE: this PyVista build (0.48) writes explicit string labels rather than
         # relying on VTK's native auto-tick generator, so the axes never "round up"
         # past the room's true extent -- no extra range clamping is needed.
-        self.cube_axes.update_bounds(self.grid.bounds)
+        self.cube_axes.SetBounds(self.grid.bounds)
         self.cube_axes.Modified()
 
         # 3. Write the new values *into the existing* VTK scalar array (not a
