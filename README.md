@@ -16,7 +16,7 @@ If it proves useful to anyone out there, I couldn’t be happier.
   Supports both Mono and Stereo configurations with three calculation modes:
   - **Uncorrelated (Independent Power Sum)**: Adds acoustic power without wave interference.
   - **In-Phase (Global Cancel - Fast)**: A fast approximation model for phase cancellation.
-  - **In-Phase (True Complex Field - Experimental)**: The ultimate physics engine. It synthesizes the exact complex field (real + imaginary parts) across the entire 3D space, perfectly reproducing the spatial warping of wave nodes when subwoofers are placed asymmetrically. Please note that this mode is experimental, and its practicality cannot be guaranteed.
+  - **In-Phase (True Complex Field - Experimental)**: The ultimate physics engine. It synthesizes the exact complex field (real + imaginary parts) across the entire 3D space, perfectly reproducing the spatial warping of wave nodes when subwoofers are placed asymmetrically. Please note that this mode is experimental, and its practicality cannot be guaranteed. (Currently, the effects of tangental and oblique modes are too pronounced. We are currently considering countermeasures. Please refer to issue #4.)
 - **Customizable Wall Reflections**: Fine-tune the reflection coefficient (0.0 to 1.0) for all six boundaries (walls, floor, ceiling).
 - **Spatial Smoothing**: This feature smooths the signal within a customized radius around the microphone's coordinates to better match how sound is actually perceived. It evens out sharp dips in the In-Phase model.
 - **Data Export**: Export your room configurations, frequency response data, and complete room modes directly to a CSV file.
