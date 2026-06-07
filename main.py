@@ -871,6 +871,9 @@ def main():
     except ImportError:
         pass
     win.show()
+    win.raise_()
+    win.activateWindow()
+    win.setWindowState(win.windowState() & ~Qt.WindowMinimized | Qt.WindowActive)
     sys.exit(app.exec())
 
 
