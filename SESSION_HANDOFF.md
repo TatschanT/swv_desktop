@@ -1,6 +1,6 @@
 # Standing Wave Viewer — Session Handoff Document
-**Date:** 2026-06-02  
-**Status:** **V1.1 COMPLETE** ✅ — all three V1.1 features shipped and verified; app is stable and ready for Windows `.exe` packaging.  
+**Date:** 2026-06-10  
+**Status:** **V1.1.2 CURRENT** ✅ — V1.1 features plus post-release hotfixes and physics accuracy overhaul complete; app stable.  
 **Project:** `swv_desktop` (`/home/ttatsuta/Projects/swv_desktop`)  
 **Venv:** `.venv/` (Python 3.14, PySide6 6.11, PyVista 0.48, pyvistaqt 0.11, Matplotlib 3.10, NumPy 2.4)
 
@@ -27,6 +27,21 @@
 | 1 | Room-mode frequency guide lines on the 2D response plot |
 | 2 | 3D rendering mode toggle: Volume vs. Contour ("Clear Visibility") |
 | 3 | PyInstaller path-resolution helpers for Windows `.exe` packaging |
+
+### V1.1.1 (Post-release hotfixes)
+
+| Fix | Deliverable |
+|-----|-------------|
+| HiDPI scaling | `QT_ENABLE_HIGHDPI_SCALING=0` prevents window overflow on Windows with Display Scaling >100% |
+| Startup splash | `pyi_splash` screen shown while heavy libraries (PyVista, PySide6) load in frozen build |
+
+### V1.1.2 (Physics accuracy & VTK rendering fixes)
+
+| Fix / Change | Deliverable |
+|--------------|-------------|
+| VTK grid rendering | Fixed CubeAxesActor bug where rooms <2.5 m caused stretched/missing grid lines; replaced axis tick numbers with clean 4-division grid lines that scale with any room dimension |
+| Mode Energy Weighting (mode_norm) | Overhauled physics engine — Oblique and Tangential modes now carry less energy than Axial modes (realistic amplitude decay based on mode type, mirroring real-world wall reflections) |
+| Complex Field Accuracy | Fixed excessive cancellation zones (blue) at high frequencies and unnatural extreme peaks (red) in corners at low frequencies in "True Complex Field" mode |
 
 ---
 
@@ -158,6 +173,22 @@ Two helpers live at the top of `config.py` (imported by `main.py` and `settings_
 | `get_user_data_path(filename)` | Read/write user data (`settings.json`) | `os.path.dirname(sys.executable)` in frozen build, `os.path.abspath(".")` in script mode |
 
 **Why the split matters:** `sys._MEIPASS` is a temporary extraction directory deleted when the `.exe` exits — any file written there is lost. Writable files MUST go to the directory containing the executable.
+
+### 2.9 HiDPI Scaling Lock (V1.1.1)
+
+`os.environ["QT_ENABLE_HIGHDPI_SCALING"] = "0"` is set at the very top of `main.py`, before any Qt imports. This hard-locks the window to its intended 1600×1000 physical pixels regardless of Windows Display Scaling. Without it, a 150% OS scaling setting would render the window at 2400×1500 — too large for a 1080p screen.
+
+**Rule:** This env-var must remain at the module top-level so it takes effect before `QApplication` initialises.
+
+### 2.10 Mode Energy Weighting — `mode_norm` (V1.1.2)
+
+In `physics.py`, mode amplitude is now weighted by mode type (Axial / Tangential / Oblique) to reflect real-world energy decay from wall reflections. The weighting factor is called `mode_norm`.
+
+- **Axial** (one non-zero index): full amplitude — reflects off only 2 walls.
+- **Tangential** (two non-zero indices): reduced amplitude — reflects off 4 walls, more loss.
+- **Oblique** (all three indices non-zero): lowest amplitude — reflects off all 6 walls.
+
+**Rationale:** without weighting, all modes contribute equally regardless of how many wall interactions they undergo, producing physically incorrect pressure distributions (exaggerated peaks in corners at low freq; excessive cancellation at high freq in Complex Field mode). `mode_norm` corrects the relative contributions before summation. The old name `mode_weight` was replaced by `mode_norm` as of commit `bdec28a`.
 
 ---
 
@@ -331,7 +362,39 @@ def get_user_data_path(filename: str) -> str:
 
 ---
 
-## 6. How to Run
+## 6. Completed Tasks (V1.1.1)
+
+### Hotfix — PySide6 HiDPI Scaling ✅
+
+`os.environ["QT_ENABLE_HIGHDPI_SCALING"] = "0"` added at the top of `main.py` (before Qt imports). Prevents the 1600×1000 window from exceeding screen bounds on Windows with Display Scaling >100%. See §2.9.
+
+### Startup Splash Screen ✅
+
+`pyi_splash` integration added for the frozen (PyInstaller) build. Provides visual feedback while PyVista and PySide6 load. No impact on script-mode execution.
+
+---
+
+## 6a. Completed Tasks (V1.1.2)
+
+### Fix — VTK CubeAxesActor Grid Rendering ✅
+
+Fixed upstream VTK bug affecting rooms with any dimension <2.5 m: the CubeAxesActor would stretch or omit grid lines. Solution: replaced axis tick-number rendering with clean, evenly spaced 4-division grid lines that scale correctly with any room dimension. Dramatically improves 3D visual clarity at small room sizes.
+
+### Change — Mode Energy Weighting (`mode_norm`) ✅
+
+Overhauled `physics.py` to weight each room mode's amplitude by its type (Axial > Tangential > Oblique), reflecting the progressive energy loss from multiple wall reflections. See §2.10 for the full rationale. The variable was renamed from `mode_weight` → `mode_norm` (commit `bdec28a`).
+
+### Fix — Complex Field Accuracy ✅
+
+The "True Complex Field" simulation mode (`compute_tensor_3d` with phase-aware summation) was producing:
+- Excessive blue cancellation zones at high frequencies
+- Unnatural extreme red peaks in room corners at low frequencies
+
+Both artefacts were caused by equal-amplitude mode summation (pre-`mode_norm`). With the energy weighting applied, the simulated pressure field is substantially more physically accurate.
+
+---
+
+## 7. How to Run
 
 ```bash
 cd /home/ttatsuta/Projects/swv_desktop
@@ -344,11 +407,15 @@ cd /home/ttatsuta/Projects/swv_desktop
 
 ---
 
-## 7. Future Roadmap / Next Steps (V1.2 / Bug Fixes)
+## 8. Active Development Roadmap (Current Phase)
 
-The application is currently **stable at V1.1.0** with all planned features complete. No known bugs.
+The application is **stable at V1.1.2**. The current development phase targets rendering accuracy and new UI controls:
 
-**Next likely work:**
-- **Windows `.exe` packaging** — the path helpers from Feature 3 are in place. The remaining step is authoring a PyInstaller `.spec` file (bundle `images/` as a data asset via `datas=[("images", "images")]`, collect PySide6 and PyVista hooks).
-- **V1.2 feature ideas** (no commitment yet): per-mode scalar bar, contour opacity slider in Settings, export of the 3D field to VTK/VTI format, additional room-mode annotations (mode labels on the guide lines).
-- **Bug fixes** — file issues at `https://github.com/anthropics/claude-code/issues` or note them at the top of the next session handoff.
+| Step | Type | Task | Status |
+|------|------|------|--------|
+| 1 | Bugfix | **2-Sigma Statistical Clipping** — implement 2σ clipping on the volume rendering scalar range to prevent extreme hotspots from washing out the colour scale | 🔲 **TODO (next)** |
+| 2 | Refactor | **Energy Weighting naming** — fix "Energy Weighting" naming conventions and comments throughout codebase | ✅ **Completed** |
+| 3 | Feature | **Room Scatter slider** — add "Room Scatter" (Order Damping) slider to the UI | 🔲 TODO |
+| 4 | Feature | **Listening Area slider** — add "Listening Area" (Spatial Smoothing) slider to the UI | 🔲 TODO |
+
+**Step 1 detail:** The volume renderer currently maps scalars over the full `[min, max]` range of each frame. A single outlier voxel (hotspot or cold-spot) compresses the entire colour scale, making the rest of the field appear flat. The fix is to clip the `clim` to `[mean − 2σ, mean + 2σ]` before passing it to VTK, discarding the extreme 5% of values. This is analogous to the `_contour_levels` statistical logic already used in contour mode (§5, Feature 2).

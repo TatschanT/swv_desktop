@@ -254,14 +254,23 @@ class Render3D:
 
     @staticmethod
     def _normalize(values: np.ndarray) -> np.ndarray:
-        """Force the field to span exactly [0.0, 1.0] via min-max scaling so the
-        fixed color/opacity transfer functions always cover the data."""
+        """Normalize the field to [0.0, 1.0] using 2-sigma clipping.
+
+        Extreme hotspots (e.g. corner pressure peaks) can pull the strict
+        min/max far outside the bulk of the field, compressing most of the room
+        into a narrow blue band.  Clipping to [mean ± 2σ] discards the outlier
+        ~5% and maps the perceptually important bulk of the field to the full
+        colour/opacity range.
+        """
         values = np.asarray(values, dtype=np.float32)
-        lo = float(values.min())
-        hi = float(values.max())
-        if hi - lo < 1e-12:
+        mean = float(values.mean())
+        std  = float(values.std())
+        robust_min = max(0.0, mean - 2.0 * std)
+        robust_max = mean + 2.0 * std
+        if robust_max - robust_min < 1e-12:
             return np.zeros_like(values, dtype=np.float32)
-        return ((values - lo) / (hi - lo)).astype(np.float32)
+        clipped = np.clip(values, robust_min, robust_max)
+        return ((clipped - robust_min) / (robust_max - robust_min)).astype(np.float32)
 
     # -- contour ("Clear Visibility") helpers ---------------------------
     @staticmethod
