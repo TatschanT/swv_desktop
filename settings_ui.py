@@ -52,8 +52,6 @@ FIELDS = [
     ("PhysicalConfig", "MAX_FREQ",          "Max frequency (Hz)",        _FLOAT, 50.0, 1000.0, 0, 5.0),
     ("SimResolution",  "FREQ_1D_STEP",      "Freq response step (Hz)",   _INT,   1, 50),
     ("SimResolution",  "GRID_SIZE_NORMAL",  "3D grid size (per axis)",   _INT,   8, 60),
-    ("SimResolution",  "SMOOTHING_RADIUS",  "Smoothing radius (m)",      _FLOAT, 0.0, 2.0, 2, 0.05),
-    ("SimResolution",  "SMOOTHING_SAMPLES", "Smoothing samples / axis",  _INT,   1, 11),
 ]
 
 # Visual grouping of the fields into labelled sections.
@@ -61,7 +59,6 @@ _GROUPS = [
     ("Physical", ["SPEED_OF_SOUND", "MIN_FREQ", "MAX_FREQ"]),
     ("Frequency response resolution", ["FREQ_1D_STEP"]),
     ("3D resolution", ["GRID_SIZE_NORMAL"]),
-    ("Spatial smoothing", ["SMOOTHING_RADIUS", "SMOOTHING_SAMPLES"]),
 ]
 
 

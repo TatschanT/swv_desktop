@@ -110,11 +110,10 @@ class SimResolution:
     FREQ_3D_STEP_HIGH = 2
     GRID_SIZE_HIGH = 37
 
-    # Spatial smoothing (spatial averaging) settings.
-    # The mic position is sampled over a cube of +/- SMOOTHING_RADIUS [m] with
-    # SMOOTHING_SAMPLES points per axis, then RMS-averaged across all samples.
-    # A larger radius averages over a wider region, smoothing sharp dips/peaks
-    # more strongly so the effect is more visible; more samples make the
-    # averaging smoother. (radius=0.3, samples=5 -> 5^3 = 125 sample points.)
-    SMOOTHING_RADIUS = 0.3
+    # Listening Area sampling resolution: mic-sample points per axis used by
+    # compute_f_response_1d when the Listening Area slider is > 0. The mic is
+    # sampled over a cube (half-width = the slider value in metres) with this
+    # many points per axis, then RMS-averaged (5 -> 5^3 = 125 sample points).
+    # The half-width is now driven live by the UI slider, so only the sample
+    # count remains here as a fixed resolution/performance constant.
     SMOOTHING_SAMPLES = 5

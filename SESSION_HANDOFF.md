@@ -1,6 +1,6 @@
 # Standing Wave Viewer — Session Handoff Document
 **Date:** 2026-06-10  
-**Status:** **V1.1.2 CURRENT** ✅ — V1.1 features plus post-release hotfixes and physics accuracy overhaul complete; app stable.  
+**Status:** **V1.2.0 STABLE** ✅ — Advanced acoustics sliders, unified frequency config, and tech-debt cleanup complete. Session closed.  
 **Project:** `swv_desktop` (`/home/ttatsuta/Projects/swv_desktop`)  
 **Venv:** `.venv/` (Python 3.14, PySide6 6.11, PyVista 0.48, pyvistaqt 0.11, Matplotlib 3.10, NumPy 2.4)
 
@@ -407,15 +407,64 @@ cd /home/ttatsuta/Projects/swv_desktop
 
 ---
 
-## 8. Active Development Roadmap (Current Phase)
+## 8. V1.2.0 Development Roadmap — COMPLETED ✅
 
-The application is **stable at V1.1.2**. The current development phase targets rendering accuracy and new UI controls:
+All four steps of the V1.2.0 development phase were completed during this session:
 
 | Step | Type | Task | Status |
 |------|------|------|--------|
-| 1 | Bugfix | **2-Sigma Statistical Clipping** — implement 2σ clipping on the volume rendering scalar range to prevent extreme hotspots from washing out the colour scale | 🔲 **TODO (next)** |
+| 1 | Bugfix | **2-Sigma Statistical Clipping** — 2σ clipping on the volume rendering scalar range to prevent extreme hotspots from washing out the colour scale | ✅ **Completed** |
 | 2 | Refactor | **Energy Weighting naming** — fix "Energy Weighting" naming conventions and comments throughout codebase | ✅ **Completed** |
-| 3 | Feature | **Room Scatter slider** — add "Room Scatter" (Order Damping) slider to the UI | 🔲 TODO |
-| 4 | Feature | **Listening Area slider** — add "Listening Area" (Spatial Smoothing) slider to the UI | 🔲 TODO |
+| 3 | Feature | **Room Scatter slider** — "Room Scatter" (Order Damping) slider in the "Advanced Acoustics" group box | ✅ **Completed** |
+| 4 | Feature | **Listening Area slider** — "Listening Area (m)" (Spatial Smoothing) slider in the "Advanced Acoustics" group box | ✅ **Completed** |
 
-**Step 1 detail:** The volume renderer currently maps scalars over the full `[min, max]` range of each frame. A single outlier voxel (hotspot or cold-spot) compresses the entire colour scale, making the rest of the field appear flat. The fix is to clip the `clim` to `[mean − 2σ, mean + 2σ]` before passing it to VTK, discarding the extreme 5% of values. This is analogous to the `_contour_levels` statistical logic already used in contour mode (§5, Feature 2).
+---
+
+## 9. Completed Tasks (V1.2.0)
+
+### Bugfix — 2-Sigma Statistical Clipping (`render.py`) ✅
+
+`Render3D._normalize` switched from strict min/max scaling to a 2σ robust clipping approach. The scalar field is clipped to `[max(0, mean − 2σ), mean + 2σ]` before normalising to `[0, 1]`, discarding the extreme ~5% of outlier voxels. This prevents corner pressure hotspots from compressing the rest of the room into a uniform blue band. The floor `max(0, …)` ensures pressure magnitudes never produce a negative lower bound.
+
+### Feature — Advanced Acoustics Sliders (`main.py`, `physics.py`, `graphs.py`, `render.py`) ✅
+
+A new **"Advanced Acoustics"** `QGroupBox` was added to the right panel (between Wall Reflection Coefficients and Room Modes), containing two `LabeledSlider` widgets side-by-side:
+
+**Room Scatter** (0.0 – 0.5, step 0.01, default 0.0):
+- Adds an order-dependent damping penalty to `calc_gamma`: `room_scatter × (nx² + ny² + nz²)`. Using the square of the mode order (not the square root) provides more physically realistic high-order mode decay.
+- Threaded through the full call chain: `_refresh` → `render3d.update_mesh` → `calc_tensor_space` → `compute_tensor_3d` → `calc_gamma`; and `_refresh` → `plot2d.update_all` → `update_freq_response` → `compute_f_response_1d` → `calc_gamma`.
+
+**Listening Area (m)** (0.0 – 0.3, step 0.01, default 0.0):
+- Replaces the old boolean "Spatial Smoothing" checkbox. When `> 0`, `compute_f_response_1d` samples a mic cube of half-width = slider value (metres) with `SMOOTHING_SAMPLES` points per axis (5³ = 125 points) and RMS-averages the response.
+- Old `smoothing_chk` checkbox removed from the 2D-graph toggle row.
+
+Both sliders follow the existing `valueChanged` / `committed` signal gating (live with Dynamic ON, one recompute on release). CSV export updated to log both parameters.
+
+### Refactor — Unified Frequency Bounds (`config.py`, `physics.py`, `main.py`, `graphs.py`, `settings_ui.py`) ✅
+
+`PhysicalConfig.MAX_CALC_FREQ` replaced by `MIN_FREQ = 20.0` and `MAX_FREQ = 250.0` — the single source of truth for both the physics engine and the display layer. `SimResolution.FREQ_1D_START` / `FREQ_1D_END` removed; only `FREQ_1D_STEP` remains.
+
+Propagation chain:
+- **physics.py**: all 6 `MAX_CALC_FREQ` references → `MAX_FREQ`.
+- **graphs.py**: `rebuild_freqs` and `set_xlim` both read `MIN_FREQ`/`MAX_FREQ` directly.
+- **main.py**: `freq_slider` constructed from `MIN_FREQ`/`MAX_FREQ`; `_on_settings_applied` calls `setMaxValue`/`setMinValue` to retune the slider live (ceiling first to avoid a collapsed intermediate range). New `LabeledSlider.setMinValue` method added (mirror of `setMaxValue`, re-bases tick mapping).
+- **settings_ui.py**: exposes `MIN_FREQ` + `MAX_FREQ` under the "Physical" group; `FREQ_1D_START`/`END` entries removed.
+
+Result: changing Min/Max Frequency in the Settings dialog instantly redraws the 2D plot X-axis, resets the frequency slider bounds, and re-limits mode generation — with no restart.
+
+### Cleanup — Removed Obsolete `SMOOTHING_RADIUS` (`config.py`, `settings_ui.py`) ✅
+
+`SimResolution.SMOOTHING_RADIUS` removed entirely (the Listening Area slider now owns the radius dynamically). `SMOOTHING_SAMPLES` kept as a fixed resolution constant (still read by `compute_f_response_1d`), but no longer exposed in the Settings dialog. The entire "Spatial smoothing" group removed from the Settings UI.
+
+---
+
+## 10. Session Conclusion
+
+**V1.2.0 is a stable, feature-complete milestone for this development phase.** All four roadmap items shipped and verified. The codebase is clean: no known technical debt introduced in this session, all obsolete constants removed, and the physics → UI propagation paths are fully consistent.
+
+**This session is officially closed.** The next session should start by reading this document and `CHANGELOG.md`, then deciding on the V1.3 roadmap.
+
+**Outstanding nice-to-haves (no commitment):**
+- `SMOOTHING_SAMPLES` could be re-exposed in Settings under a clearer name (`LISTENING_AREA_SAMPLES`) if users need to trade quality vs. speed on the listening-area averaging.
+- Windows `.exe` packaging: PyInstaller `.spec` file (the path helpers are already in place from V1.1).
+- V1.3 feature ideas: per-mode scalar bar, contour opacity slider, export of the 3D field to VTK/VTI format, mode labels on the guide lines.
