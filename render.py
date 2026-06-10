@@ -355,13 +355,14 @@ class Render3D:
         self.plotter.render()
 
     # -- the in-place update --------------------------------------------
-    def update_mesh(self, room, spk1, spk2, mic, num_src, corr_mode, freq):
+    def update_mesh(self, room, spk1, spk2, mic, num_src, corr_mode, freq, room_scatter=0.0):
         """Recompute the pressure field for ``freq`` and update everything in
         place. Never clears the plotter, so the camera is preserved."""
         # 1. New pressure field. physics returns an [ix, iy, iz] array; ImageData
         #    expects x-fastest ordering -> ravel order='F' matches exactly.
         pressure = physics.calc_tensor_space(
-            room, spk1, spk2, num_src, corr_mode, freq, grid_size=self.grid_size
+            room, spk1, spk2, num_src, corr_mode, freq,
+            grid_size=self.grid_size, room_scatter=room_scatter,
         )
         scalars = self._normalize(pressure.ravel(order="F"))
 

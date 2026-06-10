@@ -36,7 +36,7 @@ def calc_room_modes(room: RoomConfig, max_order: int = 4, max_freq: float = None
     """
     c = app_config.PhysicalConfig.SPEED_OF_SOUND
     if max_freq is None:
-        max_freq = app_config.PhysicalConfig.MAX_CALC_FREQ
+        max_freq = app_config.PhysicalConfig.MAX_FREQ
 
     if room.Lx <= 0 or room.Ly <= 0 or room.Lz <= 0:
         return []
@@ -68,9 +68,9 @@ def get_modal_norm(nx, ny, nz):
 
 def get_max_modes(room: RoomConfig) -> tuple:
     return (
-        int(2.0 * room.Lx * app_config.PhysicalConfig.MAX_CALC_FREQ / app_config.PhysicalConfig.SPEED_OF_SOUND) + 2,
-        int(2.0 * room.Ly * app_config.PhysicalConfig.MAX_CALC_FREQ / app_config.PhysicalConfig.SPEED_OF_SOUND) + 2,
-        int(2.0 * room.Lz * app_config.PhysicalConfig.MAX_CALC_FREQ / app_config.PhysicalConfig.SPEED_OF_SOUND) + 2
+        int(2.0 * room.Lx * app_config.PhysicalConfig.MAX_FREQ / app_config.PhysicalConfig.SPEED_OF_SOUND) + 2,
+        int(2.0 * room.Ly * app_config.PhysicalConfig.MAX_FREQ / app_config.PhysicalConfig.SPEED_OF_SOUND) + 2,
+        int(2.0 * room.Lz * app_config.PhysicalConfig.MAX_FREQ / app_config.PhysicalConfig.SPEED_OF_SOUND) + 2
     )
 
 def calc_shape(n: int, pos: float, L: float, R: float) -> float:
@@ -90,24 +90,32 @@ def get_psi(n: int, pos: float, L: float, R: float) -> complex:
 
     return np.cos(theta) - 1j * beta * center_offset * np.sin(theta)
 
-def calc_gamma(nx: int, ny: int, nz: int, room: RoomConfig) -> float:
+def calc_gamma(nx: int, ny: int, nz: int, room: RoomConfig, room_scatter: float = 0.0) -> float:
     n_sum = nx + ny + nz
     if n_sum == 0: return app_config.PhysicalConfig.GAMMA_ZERO_SUM
     R_eff = (nx * room.Rx + ny * room.Ry + nz * room.Rz) / n_sum
-    return app_config.PhysicalConfig.GAMMA_BASE + app_config.PhysicalConfig.GAMMA_SCALE * (1.0 - R_eff)
+    gamma = app_config.PhysicalConfig.GAMMA_BASE + app_config.PhysicalConfig.GAMMA_SCALE * (1.0 - R_eff)
+    # Room Scatter: an order-dependent damping penalty. Higher-order (oblique)
+    # modes travel longer paths and scatter off more surfaces, so they decay
+    # faster. The mode order magnitude sqrt(nx^2+ny^2+nz^2) scales the penalty.
+    if room_scatter > 0.0:
+        gamma += room_scatter * (nx**2 + ny**2 + nz**2)
+    return gamma
 
-def compute_f_response_1d(room: RoomConfig, spk1: Position, spk2: Position, mic: Position, num_src: int, corr_mode: str, freqs_1d: np.ndarray, smoothing: bool = False) -> np.ndarray:
+def compute_f_response_1d(room: RoomConfig, spk1: Position, spk2: Position, mic: Position, num_src: int, corr_mode: str, freqs_1d: np.ndarray, listening_area: float = 0.0, room_scatter: float = 0.0) -> np.ndarray:
     Lx, Ly, Lz = room.Lx, room.Ly, room.Lz
     Rx, Ry, Rz = room.Rx, room.Ry, room.Rz
     sx, sy, sz = spk1.x, spk1.y, spk1.z
     sx2, sy2, sz2 = spk2.x, spk2.y, spk2.z
 
-    if smoothing:
-        # Sample a cube of mic positions of half-width SMOOTHING_RADIUS with
-        # SMOOTHING_SAMPLES points per axis (so samples^3 points total), then
-        # RMS-average the response over them. linspace includes the center when
-        # the sample count is odd, so the un-smoothed point is still represented.
-        radius = app_config.SimResolution.SMOOTHING_RADIUS
+    if listening_area > 0.0:
+        # Listening Area: sample a cube of mic positions of half-width
+        # ``listening_area`` [m] with SMOOTHING_SAMPLES points per axis (so
+        # samples^3 points total), then RMS-average the response over them. This
+        # models a finite listening zone rather than an idealised point. linspace
+        # includes the center when the sample count is odd, so the on-axis point
+        # is still represented.
+        radius = listening_area
         samples = app_config.SimResolution.SMOOTHING_SAMPLES
         offsets = np.linspace(-radius, radius, samples)
         mic_positions = [(mic.x + dx, mic.y + dy, mic.z + dz) for dx in offsets for dy in offsets for dz in offsets]
@@ -130,10 +138,10 @@ def compute_f_response_1d(room: RoomConfig, spk1: Position, spk2: Position, mic:
                 for nz in range(max_nz):
                     if nx == 0 and ny == 0 and nz == 0: continue
                     fn = (app_config.PhysicalConfig.SPEED_OF_SOUND / 2.0) * np.sqrt((nx/Lx)**2 + (ny/Ly)**2 + (nz/Lz)**2)
-                    if fn > app_config.PhysicalConfig.MAX_CALC_FREQ: continue
+                    if fn > app_config.PhysicalConfig.MAX_FREQ: continue
                     # modal energy weighting
                     mode_norm = get_modal_norm(nx, ny, nz)
-                    gamma = calc_gamma(nx, ny, nz, room)
+                    gamma = calc_gamma(nx, ny, nz, room, room_scatter)
                     psi1 = get_psi(nx, sx, Lx, Rx) * get_psi(ny, sy, Ly, Ry) * get_psi(nz, sz, Lz, Rz)
                     if num_src == 2:
                         psi2 = get_psi(nx, sx2, Lx, Rx) * get_psi(ny, sy2, Ly, Ry) * get_psi(nz, sz2, Lz, Rz)
@@ -157,7 +165,7 @@ def compute_f_response_1d(room: RoomConfig, spk1: Position, spk2: Position, mic:
                 for nz in range(max_nz):
                     if nx == 0 and ny == 0 and nz == 0: continue
                     fn = (app_config.PhysicalConfig.SPEED_OF_SOUND / 2.0) * np.sqrt((nx/Lx)**2 + (ny/Ly)**2 + (nz/Lz)**2)
-                    if fn > app_config.PhysicalConfig.MAX_CALC_FREQ: continue
+                    if fn > app_config.PhysicalConfig.MAX_FREQ: continue
                     # modal energy weighting
                     mode_norm = get_modal_norm(nx, ny, nz)
                     psi1 = get_psi(nx, sx, Lx, Rx) * get_psi(ny, sy, Ly, Ry) * get_psi(nz, sz, Lz, Rz)
@@ -172,7 +180,7 @@ def compute_f_response_1d(room: RoomConfig, spk1: Position, spk2: Position, mic:
 
                     exc = exc * mode_norm
                     recs = np.array([calc_shape(nx, m_x, Lx, Rx) * calc_shape(ny, m_y, Ly, Ry) * calc_shape(nz, m_z, Lz, Rz) for m_x, m_y, m_z in zip(mxs, mys, mzs)])
-                    gamma = calc_gamma(nx, ny, nz, room)
+                    gamma = calc_gamma(nx, ny, nz, room, room_scatter)
 
                     for i, f in enumerate(freqs_1d):
                         res_amp = (app_config.PhysicalConfig.RESONANCE_SCALING / fn) / np.sqrt((f - fn)**2 + gamma**2)
@@ -185,7 +193,7 @@ def compute_f_response_1d(room: RoomConfig, spk1: Position, spk2: Position, mic:
     f_response_db = f_response_db - np.max(f_response_db)
     return f_response_db
 
-def calc_tensor_space(room: RoomConfig, spk1: Position, spk2: Position, num_src: int, corr_mode: str, freq: float, grid_size: int = None) -> np.ndarray:
+def calc_tensor_space(room: RoomConfig, spk1: Position, spk2: Position, num_src: int, corr_mode: str, freq: float, grid_size: int = None, room_scatter: float = 0.0) -> np.ndarray:
     """Convenience wrapper around ``compute_tensor_3d`` for a SINGLE frequency.
 
     Returns the magnitude pressure field as a 3D array of shape
@@ -196,11 +204,11 @@ def calc_tensor_space(room: RoomConfig, spk1: Position, spk2: Position, num_src:
     if grid_size is None:
         grid_size = app_config.SimResolution.GRID_SIZE_NORMAL
     freqs = np.array([float(freq)], dtype=float)
-    _, _, _, tensor = compute_tensor_3d(room, spk1, spk2, num_src, corr_mode, freqs, grid_size)
+    _, _, _, tensor = compute_tensor_3d(room, spk1, spk2, num_src, corr_mode, freqs, grid_size, room_scatter)
     return tensor[0]
 
 
-def compute_tensor_3d(room: RoomConfig, spk1: Position, spk2: Position, num_src: int, corr_mode: str, freqs_3d: np.ndarray, grid_size: int = 32) -> tuple:
+def compute_tensor_3d(room: RoomConfig, spk1: Position, spk2: Position, num_src: int, corr_mode: str, freqs_3d: np.ndarray, grid_size: int = 32, room_scatter: float = 0.0) -> tuple:
     Lx, Ly, Lz = room.Lx, room.Ly, room.Lz
     Rx, Ry, Rz = room.Rx, room.Ry, room.Rz
     sx, sy, sz = spk1.x, spk1.y, spk1.z
@@ -223,10 +231,10 @@ def compute_tensor_3d(room: RoomConfig, spk1: Position, spk2: Position, num_src:
                     for nz in range(max_nz):
                         if nx == 0 and ny == 0 and nz == 0: continue
                         fn = (app_config.PhysicalConfig.SPEED_OF_SOUND / 2.0) * np.sqrt((nx/Lx)**2 + (ny/Ly)**2 + (nz/Lz)**2)
-                        if fn > app_config.PhysicalConfig.MAX_CALC_FREQ: continue
+                        if fn > app_config.PhysicalConfig.MAX_FREQ: continue
                         # modal energy weighting
                         mode_norm = get_modal_norm(nx, ny, nz)
-                        gamma = calc_gamma(nx, ny, nz, room)
+                        gamma = calc_gamma(nx, ny, nz, room, room_scatter)
                         res_complex = (app_config.PhysicalConfig.RESONANCE_SCALING / fn) / ((f_query - fn) + 1j * gamma)
 
                         mode_complex = get_psi(nx, X, Lx, Rx) * get_psi(ny, Y, Ly, Ry) * get_psi(nz, Z, Lz, Rz)
@@ -248,7 +256,7 @@ def compute_tensor_3d(room: RoomConfig, spk1: Position, spk2: Position, num_src:
                 for nz in range(max_nz):
                     if nx == 0 and ny == 0 and nz == 0: continue
                     fn = (app_config.PhysicalConfig.SPEED_OF_SOUND / 2.0) * np.sqrt((nx/Lx)**2 + (ny/Ly)**2 + (nz/Lz)**2)
-                    if fn > app_config.PhysicalConfig.MAX_CALC_FREQ: continue
+                    if fn > app_config.PhysicalConfig.MAX_FREQ: continue
                     # modal energy weighting
                     mode_norm = get_modal_norm(nx, ny, nz)
                     psi1 = get_psi(nx, sx, Lx, Rx) * get_psi(ny, sy, Ly, Ry) * get_psi(nz, sz, Lz, Rz)
@@ -263,7 +271,7 @@ def compute_tensor_3d(room: RoomConfig, spk1: Position, spk2: Position, num_src:
 
                     exc = exc * mode_norm
                     mode_shape = calc_shape(nx, X, Lx, Rx) * calc_shape(ny, Y, Ly, Ry) * calc_shape(nz, Z, Lz, Rz)
-                    gamma = calc_gamma(nx, ny, nz, room)
+                    gamma = calc_gamma(nx, ny, nz, room, room_scatter)
 
                     for i, f in enumerate(freqs_3d):
                         res_amp = (app_config.PhysicalConfig.RESONANCE_SCALING / fn) / np.sqrt((f - fn)**2 + gamma**2)

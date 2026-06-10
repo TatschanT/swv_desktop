@@ -1,11 +1,10 @@
 {
   "PhysicalConfig": {
     "SPEED_OF_SOUND": 343.0,
-    "MAX_CALC_FREQ": 250.0
+    "MIN_FREQ": 20.0,
+    "MAX_FREQ": 201.0
   },
   "SimResolution": {
-    "FREQ_1D_START": 20,
-    "FREQ_1D_END": 201,
     "FREQ_1D_STEP": 1,
     "GRID_SIZE_NORMAL": 25,
     "SMOOTHING_RADIUS": 0.25,

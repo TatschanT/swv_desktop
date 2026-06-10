@@ -73,8 +73,12 @@ class PhysicalConfig:
     """Constants for the physics computation."""
     SPEED_OF_SOUND = 343.0
 
-    # Upper frequency limit for modes included in the calculation (Hz)
-    MAX_CALC_FREQ = 250.0
+    # Unified frequency bounds (Hz) -- the SINGLE source of truth for both the
+    # simulation (mode generation / cutoff) and the display (frequency slider
+    # range + 2D plot X-axis). Editing these in the Settings dialog propagates
+    # to the physics engine, the freq slider and the 2D plot without a restart.
+    MIN_FREQ = 20.0
+    MAX_FREQ = 250.0
 
     # Tuning constants for the damping coefficient (gamma) calculation
     GAMMA_ZERO_SUM = 5.0
@@ -89,9 +93,9 @@ class PhysicalConfig:
 
 class SimResolution:
     """Simulation resolution and performance settings."""
-    # 1D frequency-response calculation range (Hz)
-    FREQ_1D_START = 20
-    FREQ_1D_END = 201
+    # 1D frequency-response sample resolution (Hz). The START/END bounds now
+    # live in PhysicalConfig.MIN_FREQ / MAX_FREQ (single source of truth); only
+    # the sample step belongs here.
     FREQ_1D_STEP = 1
 
     # 3D spatial-tensor calculation range (normal mode)

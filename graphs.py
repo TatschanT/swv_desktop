@@ -55,15 +55,19 @@ class Plot2DWidget(FigureCanvasQTAgg):
         self._db = None       # last computed response curve (for marker lookup)
 
     def rebuild_freqs(self):
-        """(Re)build the frequency sample axis from ``config.SimResolution``.
+        """(Re)build the frequency sample axis from the unified config bounds.
 
-        Uses ``np.arange(start, end, step)`` (end-exclusive, matching the rest
-        of the resolution config). A guard guarantees at least two points so a
-        degenerate start>=end never yields an empty curve.
+        Bounds come from ``PhysicalConfig.MIN_FREQ`` / ``MAX_FREQ`` (the single
+        source of truth) and the step from ``SimResolution.FREQ_1D_STEP``. The
+        ``+ step`` makes the range inclusive of MAX_FREQ, and ``max(...)``
+        guarantees at least two points so a degenerate MIN>=MAX never yields an
+        empty curve. Call this after the Settings dialog changes any of them.
         """
-        r = app_config.SimResolution
-        start, end, step = r.FREQ_1D_START, r.FREQ_1D_END, r.FREQ_1D_STEP
-        self._freqs = np.arange(start, max(end, start + step), step)
+        p = app_config.PhysicalConfig
+        step = app_config.SimResolution.FREQ_1D_STEP
+        start = p.MIN_FREQ
+        end = max(p.MAX_FREQ, start + step)
+        self._freqs = np.arange(start, end + step, step)
 
     # -- styling helper --------------------------------------------------
     @staticmethod
@@ -111,14 +115,14 @@ class Plot2DWidget(FigureCanvasQTAgg):
 
     # -- right subplot: 1D frequency response ----------------------------
     def update_freq_response(self, room, spk1, spk2, mic, num_src, corr_mode, current_freq,
-                             smoothing=False, mode_freqs=None):
+                             listening_area=0.0, room_scatter=0.0, mode_freqs=None):
         ax = self.ax_freq
         ax.clear()
         self._style(ax, "Frequency Response", "Frequency [Hz]", "Relative SPL [dB]")
 
         db = physics.compute_f_response_1d(
             room, spk1, spk2, mic, num_src, corr_mode, self._freqs,
-            smoothing=smoothing,
+            listening_area=listening_area, room_scatter=room_scatter,
         )
         self._db = db
 
@@ -144,9 +148,10 @@ class Plot2DWidget(FigureCanvasQTAgg):
             ha=self._annot_ha(current_freq), va="top", zorder=6,
         )
 
-        # X-axis follows the (config-driven) frequency sample range; fixed
-        # Y-axis so the plot never rescales/jumps as the curve changes.
-        ax.set_xlim(self._freqs[0], self._freqs[-1])
+        # X-axis spans the unified config bounds directly (single source of
+        # truth), so it stays in sync with the freq slider after a Settings
+        # change. Fixed Y-axis so the plot never rescales/jumps.
+        ax.set_xlim(app_config.PhysicalConfig.MIN_FREQ, app_config.PhysicalConfig.MAX_FREQ)
         ax.set_ylim(DB_MIN, DB_MAX)
 
     def _annot_ha(self, freq):
@@ -168,20 +173,21 @@ class Plot2DWidget(FigureCanvasQTAgg):
 
     # -- combined entry point --------------------------------------------
     def update_all(self, room, spk1, spk2, mic, num_src, corr_mode, current_freq,
-                   recompute_response=True, smoothing=False, mode_freqs=None):
+                   recompute_response=True, listening_area=0.0, room_scatter=0.0, mode_freqs=None):
         """Update the 2D plots.
 
         recompute_response=True  -> redraw layout + recompute the response curve
                                     (use when geometry / sources / walls change).
         recompute_response=False -> only move the frequency marker line
                                     (use when ONLY the frequency slider moves).
-        ``smoothing`` and ``mode_freqs`` are forwarded to the response recompute
-        (ignored when only the marker moves).
+        ``listening_area``, ``room_scatter`` and ``mode_freqs`` are forwarded to
+        the response recompute (ignored when only the marker moves).
         """
         if recompute_response:
             self.update_top_down(room, spk1, spk2, mic, num_src)
             self.update_freq_response(room, spk1, spk2, mic, num_src, corr_mode, current_freq,
-                                      smoothing=smoothing, mode_freqs=mode_freqs)
+                                      listening_area=listening_area, room_scatter=room_scatter,
+                                      mode_freqs=mode_freqs)
             self.draw()
         else:
             self.update_freq_marker(current_freq)

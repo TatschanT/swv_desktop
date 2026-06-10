@@ -192,6 +192,32 @@ class LabeledSlider(QWidget):
         else:
             self.edit.setText(self._fmt(current))
 
+    def setMinValue(self, new_vmin):
+        """Update the lower bound at runtime (mirror of ``setMaxValue``).
+
+        Because tick 0 maps to ``_vmin``, moving the lower bound re-bases the
+        whole tick<->value mapping. We recompute the tick count for the new
+        range, refresh the min range label, and clamp the current value up if it
+        now sits below the boundary. The fixed ``step`` is preserved.
+        """
+        current = self.value()
+        self._vmin = new_vmin
+        self._ticks = int(round((self._vmax - new_vmin) / self._step))
+
+        self.slider.blockSignals(True)
+        self.slider.setMaximum(self._ticks)
+        self.slider.setValue(self._to_tick(max(current, new_vmin)))
+        self.slider.blockSignals(False)
+
+        self._min_lbl.setText(self._fmt(new_vmin))
+
+        if current < new_vmin:
+            # Value fell below the new floor -> clamp + notify listeners.
+            self.edit.setText(self._fmt(new_vmin))
+            self.valueChanged.emit(new_vmin)
+        else:
+            self.edit.setText(self._fmt(current))
+
     def _on_slider(self, tick):
         # Slider drag -> mirror into edit, then notify listeners with real value.
         self.edit.setText(self._fmt(self._to_value(tick)))
@@ -499,15 +525,21 @@ class MainWindow(QMainWindow):
         corr = self._corr_mode()
         freq = self.freq_slider.value()
 
+        room_scatter = self.room_scatter.value()
+        listening_area = self.listening_area.value()
+
         mode_freqs = None
         if self.show_modes_chk.isChecked():
             mode_freqs = [f for f, _, _ in physics.calc_room_modes(room)]
 
-        self.render3d.update_mesh(room, spk1, spk2, mic, num_src, corr, freq)
+        self.render3d.update_mesh(
+            room, spk1, spk2, mic, num_src, corr, freq, room_scatter=room_scatter
+        )
         self.plot2d.update_all(
             room, spk1, spk2, mic, num_src, corr, freq,
             recompute_response=recompute_response,
-            smoothing=self.smoothing_chk.isChecked(),
+            listening_area=listening_area,
+            room_scatter=room_scatter,
             mode_freqs=mode_freqs,
         )
 
@@ -623,7 +655,8 @@ class MainWindow(QMainWindow):
                 writer.writerow(["Frequency (Hz)", f"{self.freq_slider.value():.1f}"])
                 writer.writerow(["Source count", num_src])
                 writer.writerow(["Phase correction", self._corr_mode()])
-                writer.writerow(["Spatial smoothing", self.smoothing_chk.isChecked()])
+                writer.writerow(["Room scatter", f"{self.room_scatter.value():.2f}"])
+                writer.writerow(["Listening area (m)", f"{self.listening_area.value():.2f}"])
 
                 # --- Section 2: frequency response -----------------------
                 writer.writerow([])
@@ -659,10 +692,19 @@ class MainWindow(QMainWindow):
     def _on_settings_applied(self):
         """React to applied settings. Some config values are consumed only at
         construction (3D grid size) or cached (2D frequency axis), so rebuild
-        those explicitly, refresh the room-modes table (depends on speed of
+        those explicitly, retune the frequency slider bounds to the unified
+        MIN_FREQ/MAX_FREQ, refresh the room-modes table (depends on speed of
         sound / max frequency), then recompute the 3D + 2D views once."""
+        P = app_config.PhysicalConfig
         room = self._current_room()
         self.render3d.set_grid_size(app_config.SimResolution.GRID_SIZE_NORMAL, room)
+
+        # Retune the frequency slider to the new bounds without restart. Raise
+        # the ceiling before the floor so the tick range never collapses through
+        # an intermediate state where a rising floor passes the old ceiling.
+        self.freq_slider.setMaxValue(P.MAX_FREQ)
+        self.freq_slider.setMinValue(P.MIN_FREQ)
+
         self.plot2d.rebuild_freqs()
         self.update_room_modes()
         self._refresh(recompute_response=True)
@@ -683,15 +725,20 @@ class MainWindow(QMainWindow):
             slider.valueChanged.connect(self._on_param_changed)
             slider.committed.connect(self._on_param_committed)
 
+        # Advanced-acoustics sliders feed the physics engine -> same gating lane
+        # as the wall sliders (live recompute only with Dynamic on, one on release).
+        for slider in (self.room_scatter, self.listening_area):
+            slider.valueChanged.connect(self._on_param_changed)
+            slider.committed.connect(self._on_param_committed)
+
         # Combos are discrete commits -> recompute immediately.
         self.source_combo.currentIndexChanged.connect(self._on_param_committed)
         self.phase_combo.currentIndexChanged.connect(self._on_param_committed)
 
         self.reset_view_btn.clicked.connect(self._on_reset_view)
 
-        # Both 2D-graph toggles are discrete commits -> full response recompute.
+        # The 2D-graph toggle is a discrete commit -> full response recompute.
         self.show_modes_chk.toggled.connect(self._on_param_committed)
-        self.smoothing_chk.toggled.connect(self._on_param_committed)
 
         # 3D render-mode toggle: lightweight 3D-only path (no physics / no 2D).
         self.contour_chk.toggled.connect(self._on_render_mode_changed)
@@ -723,16 +770,14 @@ class MainWindow(QMainWindow):
         top_lay.addWidget(self.plot2d, stretch=1)
 
         # Toggle row at the bottom-right of the 2D-graph panel.
-        # Both toggles are discrete commits -> wired in _wire_3d_signals.
+        # Discrete commit -> wired in _wire_3d_signals.
+        # (Spatial Smoothing moved to the right-panel "Listening Area" slider.)
         smooth_row = QHBoxLayout()
         smooth_row.setContentsMargins(0, 0, 0, 0)
         smooth_row.addStretch()
         self.show_modes_chk = QCheckBox("Show room modes")
         self.show_modes_chk.setFont(mono(9, bold=True))
         smooth_row.addWidget(self.show_modes_chk)
-        self.smoothing_chk = QCheckBox("Spatial Smoothing")
-        self.smoothing_chk.setFont(mono(9, bold=True))
-        smooth_row.addWidget(self.smoothing_chk)
         top_lay.addLayout(smooth_row)
 
         lay.addWidget(top_section)
@@ -748,9 +793,13 @@ class MainWindow(QMainWindow):
         self.render3d = render.Render3D(panel)
         blay.addWidget(self.render3d.interactor, stretch=1)
 
-        # Frequency slider (1 Hz steps), matched to the physics calc range.
+        # Frequency slider (1 Hz steps). Bounds come from the unified config
+        # (single source of truth) so they track Settings changes; the default
+        # value is clamped into range in case MIN_FREQ was raised above it.
+        P = app_config.PhysicalConfig
+        freq_default = min(max(40.0, P.MIN_FREQ), P.MAX_FREQ)
         self.freq_slider = LabeledSlider(
-            "Frequency (Hz)", 20.0, 250.0, 1.0, value=40.0
+            "Frequency (Hz)", P.MIN_FREQ, P.MAX_FREQ, 1.0, value=freq_default
         )
         blay.addWidget(self.freq_slider)
 
@@ -824,6 +873,20 @@ class MainWindow(QMainWindow):
             self.wall_sliders[a] = sa
             self.wall_sliders[b] = sb
         lay.addWidget(wall_box)
+
+        # --- Advanced acoustics --------------------------------------
+        # Two continuous sliders feeding the physics engine:
+        #   Room Scatter    -> order-dependent modal damping (calc_gamma)
+        #   Listening Area  -> mic-cube RMS averaging of the 1D response
+        adv_box = QGroupBox("Advanced Acoustics")
+        adv_box.setFont(mono(10, bold=True))
+        adv_lay = QHBoxLayout(adv_box)
+        adv_lay.setSpacing(8)
+        self.room_scatter = LabeledSlider("Room Scatter", 0.0, 0.5, 0.01, value=0.0)
+        self.listening_area = LabeledSlider("Listening Area (m)", 0.0, 0.3, 0.01, value=0.0)
+        adv_lay.addWidget(self.room_scatter)
+        adv_lay.addWidget(self.listening_area)
+        lay.addWidget(adv_box)
 
         # --- Room modes table ----------------------------------------
         modes_box = QGroupBox("Room modes")
