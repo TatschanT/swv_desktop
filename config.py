@@ -64,10 +64,10 @@ class AppDefaults:
     # that band (valleys) and the top (1 - CONTOUR_PEAK_FRAC) of it (peaks); the
     # middle band is deliberately skipped so the field is "see-through".
     # CONTOUR_LEVELS_PER_BAND iso-values are spread across each of the two bands.
-    CONTOUR_STD_DEV_LIMIT = 2.0
-    CONTOUR_VALLEY_FRAC = 0.3
-    CONTOUR_PEAK_FRAC = 0.7
-    CONTOUR_LEVELS_PER_BAND = 7
+    CONTOUR_STD_DEV_LIMIT = 1.5
+    CONTOUR_VALLEY_FRAC = 0.30
+    CONTOUR_PEAK_FRAC = 0.70
+    CONTOUR_LEVELS_PER_BAND = 8
 
 class PhysicalConfig:
     """Constants for the physics computation."""

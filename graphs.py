@@ -22,7 +22,7 @@ BG = "#15191e"
 FG = "#cfd6df"
 GRID = "#333b46"
 SPK_COLOR = "#38bdf8"     # blue square (matches the 3D view)
-MIC_COLOR = "#f43f5e"     # red circle
+MIC_COLOR = "#f4f4f4"      # bright white
 RESP_COLOR = "#4ade80"    # green response curve
 MARK_COLOR = "#f43f5e"    # red current-frequency line
 

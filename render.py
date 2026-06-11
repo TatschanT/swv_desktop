@@ -34,7 +34,7 @@ import physics
 
 # Colors
 SPK_COLOR = "#38bdf8"      # bright cyan-blue
-MIC_COLOR = "#f43f5e"      # bright red
+MIC_COLOR = "#f4f4f4"      # bright white
 OUTLINE_COLOR = "#dddddd"
 FLOOR_DARK = "#16233f"     # checkerboard: dark blue
 FLOOR_LIGHT = "#b8c4d0"    # checkerboard: light gray
@@ -52,13 +52,12 @@ FLOOR_RES = 8
 # reads as "black -> green -> red" rather than the full "blue -> green ->
 # yellow -> red" spectrum. High pressure (anti-nodes) stays fully opaque (1.0)
 # so reds saturate at the high end.
-OPACITY_TF = [0.3, 0.4, 0.55, 0.75, 1.0]
+OPACITY_TF = [0.24, 0.24, 0.24, 0.24, 0.24]
 
 # Per-surface opacity for the contour ("Clear Visibility") render mode. Kept low
 # so the nested valley/peak shells stay translucent and you can see through to
 # the markers / room interior, matching the original Streamlit look.
 CONTOUR_OPACITY = 0.45
-
 
 class Render3D:
     """Owns the QtInteractor and the in-place-updatable pressure volume."""
