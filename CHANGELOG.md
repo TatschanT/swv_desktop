@@ -14,7 +14,8 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 - **Statistical Color Clipping (2-Sigma Rule)**: Fixed an issue where extreme high-pressure hotspots (e.g., in room corners) would compress the global color scale, rendering the rest of the room as a giant blue cancellation zone. The 3D volume rendering now applies a robust 2-sigma statistical clipping method to preserve rich color gradients and interference patterns across the entire space.
-
+- **Volume Rendering Opacity Tuning**: Adjusted the transparency mapping (`OPACITY_TF`) to counter the visual density introduced by the 2-sigma clipping. Mid-band sound pressure is now fully transparent, creating a clear, "velvet glass" effect that beautifully isolates acoustic peaks and cancellations without obscuring the equipment markers.
+  
 ## [1.1.2] - Minor Visual & VTK Rendering Fixes
 ### Fixed
 * **3D Grid Rendering Bug**: Fixed an upstream VTK bug where the 3D bounding box (CubeAxesActor) would incorrectly stretch or fail to draw grid lines for room dimensions under 2.5 meters.
