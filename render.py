@@ -52,7 +52,7 @@ FLOOR_RES = 8
 # reads as "black -> green -> red" rather than the full "blue -> green ->
 # yellow -> red" spectrum. High pressure (anti-nodes) stays fully opaque (1.0)
 # so reds saturate at the high end.
-OPACITY_TF = [0.24, 0.24, 0.24, 0.24, 0.24]
+OPACITY_TF = [0.20, 0.10, 0.0, 0.20, 0.42]
 
 # Per-surface opacity for the contour ("Clear Visibility") render mode. Kept low
 # so the nested valley/peak shells stay translucent and you can see through to
@@ -171,7 +171,7 @@ class Render3D:
         self.plotter.add_axes()
 
         # X-ray overlay must be set up after the marker actors exist.
-        self._setup_overlay()
+        # self._setup_overlay()
         self.plotter.reset_camera()
 
     # -- construction helpers -------------------------------------------

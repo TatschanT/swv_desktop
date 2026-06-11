@@ -48,9 +48,9 @@ _FLOAT = "float"
 #   kind _FLOAT -> QDoubleSpinBox    (extra: decimals, single_step)
 FIELDS = [
     ("PhysicalConfig", "SPEED_OF_SOUND",    "Speed of sound (m/s)",      _FLOAT, 100.0, 700.0, 1, 1.0),
-    ("PhysicalConfig", "MIN_FREQ",          "Min frequency (Hz)",        _FLOAT, 1.0, 500.0, 0, 5.0),
-    ("PhysicalConfig", "MAX_FREQ",          "Max frequency (Hz)",        _FLOAT, 50.0, 1000.0, 0, 5.0),
-    ("SimResolution",  "FREQ_1D_STEP",      "Freq response step (Hz)",   _INT,   1, 50),
+    ("PhysicalConfig", "MIN_FREQ",          "Min frequency (Hz)",        _FLOAT, 10.0, 100.0, 0, 5.0),
+    ("PhysicalConfig", "MAX_FREQ",          "Max frequency (Hz)",        _FLOAT, 101.0, 501.0, 0, 5.0),
+    ("SimResolution",  "FREQ_1D_STEP",      "Freq response step (Hz)",   _INT,   1, 10),
     ("SimResolution",  "GRID_SIZE_NORMAL",  "3D grid size (per axis)",   _INT,   8, 60),
 ]
 

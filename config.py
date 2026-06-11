@@ -67,7 +67,7 @@ class AppDefaults:
     CONTOUR_STD_DEV_LIMIT = 1.5
     CONTOUR_VALLEY_FRAC = 0.30
     CONTOUR_PEAK_FRAC = 0.70
-    CONTOUR_LEVELS_PER_BAND = 8
+    CONTOUR_LEVELS_PER_BAND = 7
 
 class PhysicalConfig:
     """Constants for the physics computation."""
