@@ -8,22 +8,20 @@ If it proves useful to anyone out there, I couldn’t be happier.
 
 ## ✨ Key Features
 
-- **Native Desktop UI**: Fully integrated single-window application built with PySide6. The 3D view, 2D graphs, and controls are all visible at once without page reloads.
-- **Interactive 3D Room Setup**: Easily adjust room dimensions, speaker coordinates, and microphone positions using slider controls. 
+- **Native Desktop UI**: Fully integrated single-window application built with PySide6. The 3D view, 3D top view, frequency response graph, controls and room modes are all visible at once without page reloads. You can adjust room dimensions, wall reflection coefficients, speaker coordinates, and microphone positions using slider controls intuitively. 
 - **Accurate Frequency Response**: Simulates the frequency response (20Hz - 250Hz, adjustable) at the microphone position, accounting for room dimensions and wall reflection coefficients.
 - **Volumetric 3D Visualization**: Powered by **PyVista and VTK**, it animates the sound pressure distribution (nodes and antinodes) across the entire 3D room space for any given frequency with high-performance volumetric rendering. The camera viewpoint is perfectly preserved during real-time updates. **NEW in V1.1** You can now toggle the rendering mode to Contour mode. This allows you to see through objects when necessary.
 - **Advanced Stereo Interference Models**: 
   Supports both Mono and Stereo configurations with three calculation modes:
-  - **Uncorrelated (Independent Power Sum)**: Adds acoustic power without wave interference.
-  - **In-Phase (Global Cancel - Fast)**: A fast approximation model for phase cancellation.
-  - **In-Phase (True Complex Field - Experimental)**: The ultimate physics engine. It synthesizes the exact complex field (real + imaginary parts) across the entire 3D space, perfectly reproducing the spatial warping of wave nodes when subwoofers are placed asymmetrically. Please note that this mode is experimental, and its practicality cannot be guaranteed. 
-- **Customizable Wall Reflections**: Fine-tune the reflection coefficient (0.0 to 1.0) for all six boundaries (walls, floor, ceiling).
+  - **Uncorrelated (Independent Power Sum)**: Adds acoustic power without wave interference. It's perfect for visualizing the room's default state.
+  - **Global Cancel**: A fast approximation model for phase cancellation. This is particularly valuable when sound sources are arranged symmetrically.
+  - **In-Phase (True Complex Field - Experimental)**: The ultimate physics engine. It synthesizes the exact complex field (real + imaginary parts) across the entire 3D space, perfectly reproducing the spatial warping of wave nodes when subwoofers are placed asymmetrically. However, in the real world, the perfect interference that is theoretically possible is not perceived. This is because various scattering factors are present. Furthermore, actual sound sources are not point sources, and the range of human perception is not limited to a single point.
 - **Advanced Acoustics**
 To bridge the gap between ideal theoretical physics and real-world perception, use the Advanced Acoustics sliders:
   - **Room Scatter (Order Damping)**: Real rooms have furniture that scatters high-frequency tangential and oblique modes. This slider applies an $n^2$ penalty to high-order modes, allowing you to dial in the "liveliness" of your specific space.
   - **Listening Area (Spatial Smoothing)**: We don't listen with a mathematically infinitely small point. This slider averages the pressure field over a localized 3D area around the mic, giving you a realistic frequency response that matches actual human perception.
 - **Data Export**: Export your room configurations, frequency response data, and complete room modes directly to a CSV file.
-- **Live Settings Tuning**: Dynamically adjust simulation resolutions, grid sizes, and the speed of sound via the built-in Settings dialog without restarting the application.
+- **Live Settings Tuning**: Dynamically adjust simulation resolutions, grid sizes, and the calculation range via the built-in Settings dialog without restarting the application.
 
 ## 🚀 3D View Controls
 - When **Contour mode** is enabled, the sound pressure distribution display switches to contour mode, providing a clearer view (though the amount of information displayed decreases)
@@ -41,7 +39,7 @@ To bridge the gap between ideal theoretical physics and real-world perception, u
 ## 🛠️ Installation & Usage
 
 ### Windows
-Please download the Windows build from [Release](https://github.com/TatschanT/swv_desktop/releases/tag/V1.1.0). Extract it to any folder and run SWV.exe.
+Please download the Windows build from [Release](https://github.com/TatschanT/swv_desktop/releases/). Extract it to any folder and run SWV.exe.
 
 ### Running on a local environment on Mac and Linux 
 ### Prerequisites
