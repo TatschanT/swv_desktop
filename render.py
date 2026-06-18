@@ -252,21 +252,32 @@ class Render3D:
             self.vol_actor.GetProperty().SetScalarOpacityUnitDistance(unit)
 
     @staticmethod
-    def _normalize(values: np.ndarray, global_max=None) -> np.ndarray:
+    def _normalize(values: np.ndarray, global_max=None,
+                   calib_median=None, calib_db_range=20.0) -> np.ndarray:
         """Normalize the field to [0.0, 1.0].
 
-        When ``global_max`` is supplied (Full-band scaling), the field is scaled
-        against that fixed cross-frequency reference and clipped to [0, 1], so
-        each frequency's loudness reads relative to the whole band.
+        Accurate Full-band scaling (``calib_median`` supplied): map the field
+        onto a median-centred dB window. Values are expressed in dB relative to
+        the swept median pressure and the +/- ``calib_db_range`` window is
+        rescaled to [0, 1]. Robust against extreme outlier peaks.
 
-        Otherwise (default) it uses per-frequency 2-sigma clipping. Extreme
-        hotspots (e.g. corner pressure peaks) can pull the strict min/max far
-        outside the bulk of the field, compressing most of the room into a
-        narrow blue band.  Clipping to [mean ± 2σ] discards the outlier ~5% and
-        maps the perceptually important bulk of the field to the full
-        colour/opacity range.
+        Approximate Full-band scaling (``global_max`` supplied): scale against a
+        single fixed cross-frequency reference and clip to [0, 1], so each
+        frequency's loudness reads relative to the whole band.
+
+        Otherwise (default) per-frequency 2-sigma clipping. Extreme hotspots
+        (e.g. corner pressure peaks) can pull the strict min/max far outside the
+        bulk of the field, compressing most of the room into a narrow blue band.
+        Clipping to [mean ± 2σ] discards the outlier ~5% and maps the
+        perceptually important bulk of the field to the full colour/opacity range.
         """
         values = np.asarray(values, dtype=np.float32)
+        if calib_median is not None and calib_median > 1e-12:
+            db_vals = 20.0 * np.log10(np.clip(values / calib_median, 1e-9, None))
+            db_floor = -24.0
+            db_ceil  =  15.0
+            normalized = (db_vals - db_floor) / (db_ceil - db_floor)
+            return np.clip(normalized, 0.0, 1.0).astype(np.float32)
         if global_max is not None and global_max > 1e-12:
             return np.clip(values / global_max, 0.0, 1.0).astype(np.float32)
         mean = float(values.mean())
@@ -362,20 +373,25 @@ class Render3D:
 
     # -- the in-place update --------------------------------------------
     def update_mesh(self, room, spk1, spk2, mic, num_src, corr_mode, freq,
-                    room_scatter=0.0, global_max=None):
+                    room_scatter=0.0, global_max=None,
+                    calib_median=None, calib_db_range=20.0):
         """Recompute the pressure field for ``freq`` and update everything in
         place. Never clears the plotter, so the camera is preserved.
 
-        ``global_max`` (Full-band scaling) is forwarded to ``_normalize`` as a
-        fixed cross-frequency normalization reference; ``None`` keeps the
-        default per-frequency normalization."""
+        Full-band scaling references are forwarded to ``_normalize``:
+        ``calib_median``/``calib_db_range`` select the accurate median-centred dB
+        window; ``global_max`` selects the approximate single-reference scale.
+        All ``None`` keeps the default per-frequency normalization."""
         # 1. New pressure field. physics returns an [ix, iy, iz] array; ImageData
         #    expects x-fastest ordering -> ravel order='F' matches exactly.
         pressure = physics.calc_tensor_space(
             room, spk1, spk2, num_src, corr_mode, freq,
             grid_size=self.grid_size, room_scatter=room_scatter,
         )
-        scalars = self._normalize(pressure.ravel(order="F"), global_max=global_max)
+        scalars = self._normalize(
+            pressure.ravel(order="F"), global_max=global_max,
+            calib_median=calib_median, calib_db_range=calib_db_range,
+        )
 
         # 2. Geometry follows the room. The point count (extent) is fixed, only
         #    the spacing changes -> the box grows/shrinks. Because the mapper

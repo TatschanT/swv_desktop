@@ -2,6 +2,36 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.2.2] - 2026-06-18
+
+### Fixed: Full-band Scaling — Accurate Mode Normalization
+
+The Calibrated mode was rendering almost entirely blue due to two issues:
+
+1. The original 2-sigma clipping (`mean + 2σ`) as the per-frequency spatial
+   reference overestimates the typical pressure level, pushing the calibrated
+   median too high. The median of spatial-peak values across all frequencies
+   is used instead, giving a reference that better reflects the room's typical
+   pressure distribution.
+2. A symmetric ±20 dB window was too wide — measured data showed the actual
+   range above the median reaches only +12 to +18 dB, while nulls at modal
+   nodes can extend to −50 dB or below.
+
+**Fix:** switched the calibration reference to the cross-frequency median and
+replaced the symmetric window with an asymmetric fixed window `[−24 dB, +15 dB]`
+relative to that median. Some clipping at the extremes is intentional — it
+improves mid-range contrast at the cost of saturating deep nulls and sharp
+antinodes.
+
+| dB re. median | Colour |
+|---|---|
+| −24 dB and below | Blue |
+| 0 dB (median) | Green |
+| +15 dB and above | Red |
+
+**Files changed:** `render.py` (`_normalize()` accurate-mode branch), `main.py`
+(removed diagnostic prints). `physics.py` and `graphs.py` unchanged.
+
 ## [1.2.1] - 2026-06-18
 
 ### Added: Full-band Scaling Mode

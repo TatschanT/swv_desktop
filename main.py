@@ -278,14 +278,18 @@ class CalibWorker(QThread):
 
     Sweeps every frequency the 1D response curve uses (MIN_FREQ..MAX_FREQ in
     FREQ_1D_STEP) at the current grid size, computes the 3D pressure field at
-    each, and reports the single largest spatial max across the whole band.
+    each, collects a 2-sigma-clipped spatial maximum per frequency, and reports
+    a median-centred dB reference: the linear pressure at the median of the
+    per-frequency maxima (in dB) plus the +/- dB half-window the renderer maps
+    onto the colour range. The median makes the scale robust against the extreme
+    outlier peaks that a raw global max would be dominated by.
 
     All physics parameters are passed in as a SNAPSHOT at construction time so
     mid-computation UI changes cannot corrupt the result.
     """
 
-    progress = Signal(int)    # 0-100
-    finished = Signal(float)  # global_max value
+    progress = Signal(int)           # 0-100
+    finished = Signal(float, float)  # (median_pressure, db_range)
 
     def __init__(self, room, spk1, spk2, num_src, corr_mode,
                  room_scatter, grid_size):
@@ -313,9 +317,20 @@ class CalibWorker(QThread):
                 grid_size=self.grid_size,
                 room_scatter=self.room_scatter,
             )
-            spatial_maxes.append(float(p.max()))
+            # 2-sigma clip per frequency so a single extreme cell cannot dominate.
+            mean, std = float(p.mean()), float(p.std())
+            spatial_maxes.append(min(float(p.max()), mean + 2.0 * std))
             self.progress.emit(int((i + 1) / n * 100))
-        self.finished.emit(float(max(spatial_maxes)) if spatial_maxes else 1.0)
+
+        if spatial_maxes:
+            # Median-centred dB reference: take the median of the per-frequency
+            # maxima in dB and convert it back to a linear pressure. The renderer
+            # builds a +/- db_range window around this median.
+            maxes_db = 20.0 * np.log10(np.clip(spatial_maxes, 1e-9, None))
+            median_pressure = float(10.0 ** (np.median(maxes_db) / 20.0))
+        else:
+            median_pressure = 1.0
+        self.finished.emit(median_pressure, 20.0)
 
 
 class MainWindow(QMainWindow):
@@ -329,11 +344,15 @@ class MainWindow(QMainWindow):
         # size and the 2D frequency axis are read from config at construction.
         load_settings()
 
-        # Full-band scaling state. ``_global_max`` is the cross-frequency
-        # normalization reference (None = per-frequency default); _calib_accurate
-        # distinguishes the lightweight peak-frequency approximation from a full
-        # Calibrate sweep. ``_calib_worker`` holds the running CalibWorker (if any).
+        # Full-band scaling state.
+        #   _global_max    -- approximate-mode linear reference (None = off/none)
+        #   _calib_median  -- accurate-mode linear median reference (Calibrate)
+        #   _calib_db_range-- accurate-mode +/- dB half-window (fixed at 20.0)
+        #   _calib_accurate-- True once a Calibrate sweep has populated the median
+        #   _calib_worker  -- the running CalibWorker (if any)
         self._global_max = None
+        self._calib_median = None
+        self._calib_db_range = 20.0
         self._calib_accurate = False
         self._calib_worker = None
 
@@ -591,16 +610,23 @@ class MainWindow(QMainWindow):
         if self.show_modes_chk.isChecked():
             mode_freqs = [f for f, _, _ in physics.calc_room_modes(room)]
 
-        # Full-band scaling: feed the cached cross-frequency reference (accurate
-        # or approximate) when the mode is ON; otherwise None keeps the default
-        # per-frequency normalization.
+        # Full-band scaling normalization reference (only when the mode is ON):
+        #   accurate    -> median-centred +/- dB window (calib_median/db_range)
+        #   approximate -> single linear global_max
+        #   otherwise   -> all None -> default per-frequency normalization.
         global_max = None
-        if self.fullband_chk.isChecked() and self._global_max is not None:
-            global_max = self._global_max
+        calib_median = None
+        calib_db_range = self._calib_db_range
+        if self.fullband_chk.isChecked():
+            if self._calib_accurate and self._calib_median is not None:
+                calib_median = self._calib_median
+            elif self._global_max is not None:
+                global_max = self._global_max
 
         self.render3d.update_mesh(
             room, spk1, spk2, mic, num_src, corr, freq,
             room_scatter=room_scatter, global_max=global_max,
+            calib_median=calib_median, calib_db_range=calib_db_range,
         )
         self.plot2d.update_all(
             room, spk1, spk2, mic, num_src, corr, freq,
@@ -666,6 +692,8 @@ class MainWindow(QMainWindow):
             self.calib_progress_lbl.setText("")
 
         self._global_max = None
+        self._calib_median = None
+        self._calib_db_range = 20.0
         self._calib_accurate = False
         self.calibrate_btn.setText("Calibrate")
         # Re-enable Calibrate only if Full-band scaling is ON.
@@ -686,6 +714,7 @@ class MainWindow(QMainWindow):
         freqs = self.plot2d._freqs
         if db is None or freqs is None or len(freqs) == 0:
             self._global_max = None
+            self._calib_median = None
             self._calib_accurate = False
             return
         # _db is in dB -> convert back to linear amplitude to find the true peak.
@@ -704,6 +733,7 @@ class MainWindow(QMainWindow):
             grid_size=self.render3d.grid_size, room_scatter=room_scatter,
         )
         self._global_max = float(field.max())
+        self._calib_median = None
         self._calib_accurate = False
 
     def _on_fullband_toggled(self, checked):
@@ -714,7 +744,7 @@ class MainWindow(QMainWindow):
         compute the approximate reference. OFF: revert to per-frequency
         normalization while keeping the cache for a later re-enable."""
         if checked:
-            if self._global_max is not None and self._calib_accurate:
+            if self._calib_accurate and self._calib_median is not None:
                 self.calibrate_btn.setText("Calibrated ✓")
                 self.calibrate_btn.setEnabled(False)
             elif self._global_max is not None:
@@ -752,7 +782,7 @@ class MainWindow(QMainWindow):
         self._calib_worker = worker
         worker.progress.connect(self._on_calib_progress)
         worker.finished.connect(
-            lambda gm, w=worker: self._on_calib_finished(gm, w)
+            lambda med, dbr, w=worker: self._on_calib_finished(med, dbr, w)
         )
 
         self.calibrate_btn.setText("Calculating...")
@@ -764,13 +794,15 @@ class MainWindow(QMainWindow):
     def _on_calib_progress(self, pct):
         self.calib_progress_lbl.setText(f"Calibrating... {pct}%")
 
-    def _on_calib_finished(self, global_max, worker):
-        """Apply the swept global max, unless this worker was abandoned (geometry
-        changed mid-sweep -> a newer invalidation dropped our reference)."""
+    def _on_calib_finished(self, median, db_range, worker):
+        """Apply the swept median-centred dB reference, unless this worker was
+        abandoned (geometry changed mid-sweep -> a newer invalidation dropped our
+        reference)."""
         if worker is not self._calib_worker:
             return
         self._calib_worker = None
-        self._global_max = global_max
+        self._calib_median = median
+        self._calib_db_range = db_range
         self._calib_accurate = True
 
         self.calib_progress_lbl.setText("")
