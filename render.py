@@ -252,16 +252,23 @@ class Render3D:
             self.vol_actor.GetProperty().SetScalarOpacityUnitDistance(unit)
 
     @staticmethod
-    def _normalize(values: np.ndarray) -> np.ndarray:
-        """Normalize the field to [0.0, 1.0] using 2-sigma clipping.
+    def _normalize(values: np.ndarray, global_max=None) -> np.ndarray:
+        """Normalize the field to [0.0, 1.0].
 
-        Extreme hotspots (e.g. corner pressure peaks) can pull the strict
-        min/max far outside the bulk of the field, compressing most of the room
-        into a narrow blue band.  Clipping to [mean ± 2σ] discards the outlier
-        ~5% and maps the perceptually important bulk of the field to the full
+        When ``global_max`` is supplied (Full-band scaling), the field is scaled
+        against that fixed cross-frequency reference and clipped to [0, 1], so
+        each frequency's loudness reads relative to the whole band.
+
+        Otherwise (default) it uses per-frequency 2-sigma clipping. Extreme
+        hotspots (e.g. corner pressure peaks) can pull the strict min/max far
+        outside the bulk of the field, compressing most of the room into a
+        narrow blue band.  Clipping to [mean ± 2σ] discards the outlier ~5% and
+        maps the perceptually important bulk of the field to the full
         colour/opacity range.
         """
         values = np.asarray(values, dtype=np.float32)
+        if global_max is not None and global_max > 1e-12:
+            return np.clip(values / global_max, 0.0, 1.0).astype(np.float32)
         mean = float(values.mean())
         std  = float(values.std())
         robust_min = max(0.0, mean - 2.0 * std)
@@ -354,16 +361,21 @@ class Render3D:
         self.plotter.render()
 
     # -- the in-place update --------------------------------------------
-    def update_mesh(self, room, spk1, spk2, mic, num_src, corr_mode, freq, room_scatter=0.0):
+    def update_mesh(self, room, spk1, spk2, mic, num_src, corr_mode, freq,
+                    room_scatter=0.0, global_max=None):
         """Recompute the pressure field for ``freq`` and update everything in
-        place. Never clears the plotter, so the camera is preserved."""
+        place. Never clears the plotter, so the camera is preserved.
+
+        ``global_max`` (Full-band scaling) is forwarded to ``_normalize`` as a
+        fixed cross-frequency normalization reference; ``None`` keeps the
+        default per-frequency normalization."""
         # 1. New pressure field. physics returns an [ix, iy, iz] array; ImageData
         #    expects x-fastest ordering -> ravel order='F' matches exactly.
         pressure = physics.calc_tensor_space(
             room, spk1, spk2, num_src, corr_mode, freq,
             grid_size=self.grid_size, room_scatter=room_scatter,
         )
-        scalars = self._normalize(pressure.ravel(order="F"))
+        scalars = self._normalize(pressure.ravel(order="F"), global_max=global_max)
 
         # 2. Geometry follows the room. The point count (extent) is fixed, only
         #    the spacing changes -> the box grows/shrinks. Because the mapper

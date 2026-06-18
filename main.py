@@ -10,7 +10,8 @@ import csv
 import sys
 from datetime import datetime
 
-from PySide6.QtCore import Qt, Signal
+import numpy as np
+from PySide6.QtCore import Qt, QThread, Signal
 from PySide6.QtGui import QFont, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
@@ -272,6 +273,51 @@ def make_placeholder(text, bg=DARK_BG):
     return frame
 
 
+class CalibWorker(QThread):
+    """Background full-band calibration sweep.
+
+    Sweeps every frequency the 1D response curve uses (MIN_FREQ..MAX_FREQ in
+    FREQ_1D_STEP) at the current grid size, computes the 3D pressure field at
+    each, and reports the single largest spatial max across the whole band.
+
+    All physics parameters are passed in as a SNAPSHOT at construction time so
+    mid-computation UI changes cannot corrupt the result.
+    """
+
+    progress = Signal(int)    # 0-100
+    finished = Signal(float)  # global_max value
+
+    def __init__(self, room, spk1, spk2, num_src, corr_mode,
+                 room_scatter, grid_size):
+        super().__init__()
+        self.room = room
+        self.spk1 = spk1
+        self.spk2 = spk2
+        self.num_src = num_src
+        self.corr_mode = corr_mode
+        self.room_scatter = room_scatter
+        self.grid_size = grid_size
+
+    def run(self):
+        freqs = np.arange(
+            app_config.PhysicalConfig.MIN_FREQ,
+            app_config.PhysicalConfig.MAX_FREQ + app_config.SimResolution.FREQ_1D_STEP,
+            app_config.SimResolution.FREQ_1D_STEP,
+        )
+        spatial_maxes = []
+        n = len(freqs)
+        for i, f in enumerate(freqs):
+            p = physics.calc_tensor_space(
+                self.room, self.spk1, self.spk2, self.num_src,
+                self.corr_mode, float(f),
+                grid_size=self.grid_size,
+                room_scatter=self.room_scatter,
+            )
+            spatial_maxes.append(float(p.max()))
+            self.progress.emit(int((i + 1) / n * 100))
+        self.finished.emit(float(max(spatial_maxes)) if spatial_maxes else 1.0)
+
+
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -282,6 +328,14 @@ class MainWindow(QMainWindow):
         # Apply any persisted settings BEFORE building the panels: the 3D grid
         # size and the 2D frequency axis are read from config at construction.
         load_settings()
+
+        # Full-band scaling state. ``_global_max`` is the cross-frequency
+        # normalization reference (None = per-frequency default); _calib_accurate
+        # distinguishes the lightweight peak-frequency approximation from a full
+        # Calibrate sweep. ``_calib_worker`` holds the running CalibWorker (if any).
+        self._global_max = None
+        self._calib_accurate = False
+        self._calib_worker = None
 
         central = QWidget()
         self.setCentralWidget(central)
@@ -428,6 +482,11 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event):
         """Release the VTK render window before the app exits."""
+        # Let any in-flight calibration sweep finish so the QThread is not
+        # destroyed while still running.
+        if self._calib_worker is not None:
+            self._calib_worker.wait()
+            self._calib_worker = None
         self.render3d.close()
         super().closeEvent(event)
 
@@ -532,8 +591,16 @@ class MainWindow(QMainWindow):
         if self.show_modes_chk.isChecked():
             mode_freqs = [f for f, _, _ in physics.calc_room_modes(room)]
 
+        # Full-band scaling: feed the cached cross-frequency reference (accurate
+        # or approximate) when the mode is ON; otherwise None keeps the default
+        # per-frequency normalization.
+        global_max = None
+        if self.fullband_chk.isChecked() and self._global_max is not None:
+            global_max = self._global_max
+
         self.render3d.update_mesh(
-            room, spk1, spk2, mic, num_src, corr, freq, room_scatter=room_scatter
+            room, spk1, spk2, mic, num_src, corr, freq,
+            room_scatter=room_scatter, global_max=global_max,
         )
         self.plot2d.update_all(
             room, spk1, spk2, mic, num_src, corr, freq,
@@ -566,8 +633,151 @@ class MainWindow(QMainWindow):
 
     def _on_param_committed(self, *_):
         """Slider released / value typed / combo changed: recompute the field
-        and the 2D response curve exactly once, regardless of the toggle."""
+        and the 2D response curve exactly once, regardless of the toggle.
+
+        A committed change is a geometry change, so any Full-band calibration is
+        now stale. Recompute the response FIRST (so the 1D curve is fresh), then
+        invalidate -- the approximate reference is read from that fresh curve."""
         self._refresh(recompute_response=True)
+        self._invalidate_calibration()
+
+    def _on_display_param_committed(self, *_):
+        """Committed change that affects only the 2D display or mode overlay,
+        not the 3D pressure field (calc_tensor_space ignores these parameters).
+
+        Refreshes and recomputes the 2D response, but does NOT touch the
+        Full-band scaling cache -- it remains valid across these changes."""
+        self._refresh(recompute_response=True)
+
+    # ------------------------------------------------------------------
+    # CONTROLLER: Full-band scaling
+    # ------------------------------------------------------------------
+    def _invalidate_calibration(self):
+        """Discard the cached full-band reference because geometry changed.
+
+        Any in-flight Calibrate sweep is abandoned (its snapshot is now stale).
+        When Full-band is OFF the cache is cleared silently; when ON we
+        immediately recompute the lightweight approximate reference and redraw.
+        """
+        # Abandon a running sweep: dropping the reference makes its finished
+        # handler ignore the (now stale) result.
+        if self._calib_worker is not None:
+            self._calib_worker = None
+            self.calib_progress_lbl.setText("")
+
+        self._global_max = None
+        self._calib_accurate = False
+        self.calibrate_btn.setText("Calibrate")
+        # Re-enable Calibrate only if Full-band scaling is ON.
+        self.calibrate_btn.setEnabled(self.fullband_chk.isChecked())
+        self.fullband_chk.setEnabled(True)
+        # If Full-band is ON, immediately recompute approximate mode.
+        if self.fullband_chk.isChecked():
+            self._compute_approx_global_max()
+            self._refresh(recompute_response=False)
+
+    def _compute_approx_global_max(self):
+        """Lightweight approximate full-band reference (no background sweep).
+
+        Read the peak of the already-computed 1D response curve, compute ONE 3D
+        field at that frequency, and use its spatial max as the normalization
+        reference. Marks the cache as approximate (not Calibrated)."""
+        db = self.plot2d._db
+        freqs = self.plot2d._freqs
+        if db is None or freqs is None or len(freqs) == 0:
+            self._global_max = None
+            self._calib_accurate = False
+            return
+        # _db is in dB -> convert back to linear amplitude to find the true peak.
+        linear = 10 ** (np.asarray(db) / 20.0)
+        peak_freq = float(freqs[int(np.argmax(linear))])
+
+        room = self._current_room()
+        spk1 = self._pos(self.spk1)
+        spk2 = self._pos(self.spk2)
+        num_src = 2 if self.source_combo.currentText() == "2" else 1
+        corr = self._corr_mode()
+        room_scatter = self.room_scatter.value()
+
+        field = physics.calc_tensor_space(
+            room, spk1, spk2, num_src, corr, peak_freq,
+            grid_size=self.render3d.grid_size, room_scatter=room_scatter,
+        )
+        self._global_max = float(field.max())
+        self._calib_accurate = False
+
+    def _on_fullband_toggled(self, checked):
+        """Enter/leave Full-band scaling immediately.
+
+        ON: reuse a cached reference if geometry is unchanged (accurate ->
+        "Calibrated ✓" disabled; approximate -> Calibrate enabled), otherwise
+        compute the approximate reference. OFF: revert to per-frequency
+        normalization while keeping the cache for a later re-enable."""
+        if checked:
+            if self._global_max is not None and self._calib_accurate:
+                self.calibrate_btn.setText("Calibrated ✓")
+                self.calibrate_btn.setEnabled(False)
+            elif self._global_max is not None:
+                self.calibrate_btn.setText("Calibrate")
+                self.calibrate_btn.setEnabled(True)
+            else:
+                self._compute_approx_global_max()
+                self.calibrate_btn.setText("Calibrate")
+                self.calibrate_btn.setEnabled(True)
+        else:
+            # Keep the cached values (geometry unchanged) so re-enabling reuses
+            # them; just disable Calibrate while off.
+            self.calibrate_btn.setEnabled(False)
+        self._refresh(recompute_response=False)
+
+    def _on_calibrate_clicked(self):
+        """Launch the accurate full-band sweep in a background QThread.
+
+        Snapshots all physics parameters NOW so mid-computation UI changes can't
+        corrupt the cache. Disables the checkbox + button to block re-entrancy."""
+        if self._calib_worker is not None:
+            return  # already running
+
+        room = self._current_room()
+        spk1 = self._pos(self.spk1)
+        spk2 = self._pos(self.spk2)
+        num_src = 2 if self.source_combo.currentText() == "2" else 1
+        corr = self._corr_mode()
+        room_scatter = self.room_scatter.value()
+
+        worker = CalibWorker(
+            room, spk1, spk2, num_src, corr, room_scatter,
+            self.render3d.grid_size,
+        )
+        self._calib_worker = worker
+        worker.progress.connect(self._on_calib_progress)
+        worker.finished.connect(
+            lambda gm, w=worker: self._on_calib_finished(gm, w)
+        )
+
+        self.calibrate_btn.setText("Calculating...")
+        self.calibrate_btn.setEnabled(False)
+        self.fullband_chk.setEnabled(False)
+        self.calib_progress_lbl.setText("Calibrating... 0%")
+        worker.start()
+
+    def _on_calib_progress(self, pct):
+        self.calib_progress_lbl.setText(f"Calibrating... {pct}%")
+
+    def _on_calib_finished(self, global_max, worker):
+        """Apply the swept global max, unless this worker was abandoned (geometry
+        changed mid-sweep -> a newer invalidation dropped our reference)."""
+        if worker is not self._calib_worker:
+            return
+        self._calib_worker = None
+        self._global_max = global_max
+        self._calib_accurate = True
+
+        self.calib_progress_lbl.setText("")
+        self.fullband_chk.setEnabled(True)
+        self.calibrate_btn.setText("Calibrated ✓")
+        self.calibrate_btn.setEnabled(False)
+        self._refresh(recompute_response=False)
 
     def _on_render_mode_changed(self, *_):
         """Switch the 3D view between volume and contour rendering.
@@ -725,11 +935,13 @@ class MainWindow(QMainWindow):
             slider.valueChanged.connect(self._on_param_changed)
             slider.committed.connect(self._on_param_committed)
 
-        # Advanced-acoustics sliders feed the physics engine -> same gating lane
-        # as the wall sliders (live recompute only with Dynamic on, one on release).
-        for slider in (self.room_scatter, self.listening_area):
-            slider.valueChanged.connect(self._on_param_changed)
-            slider.committed.connect(self._on_param_committed)
+        # Advanced-acoustics: room_scatter feeds calc_tensor_space (geometry
+        # change -> invalidates calibration); listening_area only affects the
+        # 1D response curve and never reaches the 3D field (display-only).
+        self.room_scatter.valueChanged.connect(self._on_param_changed)
+        self.room_scatter.committed.connect(self._on_param_committed)
+        self.listening_area.valueChanged.connect(self._on_param_changed)
+        self.listening_area.committed.connect(self._on_display_param_committed)
 
         # Combos are discrete commits -> recompute immediately.
         self.source_combo.currentIndexChanged.connect(self._on_param_committed)
@@ -737,8 +949,14 @@ class MainWindow(QMainWindow):
 
         self.reset_view_btn.clicked.connect(self._on_reset_view)
 
-        # The 2D-graph toggle is a discrete commit -> full response recompute.
-        self.show_modes_chk.toggled.connect(self._on_param_committed)
+        # The 2D-graph toggle only controls the mode-frequency overlay on the 2D
+        # plot; it does not affect the 3D field -> display-only handler.
+        self.show_modes_chk.toggled.connect(self._on_display_param_committed)
+
+        # Full-band scaling: toggle switches normalization mode immediately;
+        # Calibrate launches the accurate background sweep.
+        self.fullband_chk.toggled.connect(self._on_fullband_toggled)
+        self.calibrate_btn.clicked.connect(self._on_calibrate_clicked)
 
         # 3D render-mode toggle: lightweight 3D-only path (no physics / no 2D).
         self.contour_chk.toggled.connect(self._on_render_mode_changed)
@@ -802,6 +1020,24 @@ class MainWindow(QMainWindow):
             "Frequency (Hz)", P.MIN_FREQ, P.MAX_FREQ, 1.0, value=freq_default
         )
         blay.addWidget(self.freq_slider)
+
+        # Full-band scaling controls (LEFT side, below the frequency slider).
+        # Checkbox toggles cross-frequency normalization; Calibrate runs the
+        # accurate background sweep; the label reports sweep progress.
+        fullband_row = QHBoxLayout()
+        fullband_row.setContentsMargins(0, 0, 0, 0)
+        self.fullband_chk = QCheckBox("Full-band scaling")
+        self.fullband_chk.setFont(mono(9, bold=True))
+        fullband_row.addWidget(self.fullband_chk)
+        self.calibrate_btn = QPushButton("Calibrate")
+        self.calibrate_btn.setFont(mono(9, bold=True))
+        self.calibrate_btn.setEnabled(False)
+        fullband_row.addWidget(self.calibrate_btn)
+        self.calib_progress_lbl = QLabel("")
+        self.calib_progress_lbl.setFont(mono(9))
+        fullband_row.addWidget(self.calib_progress_lbl)
+        fullband_row.addStretch()
+        blay.addLayout(fullband_row)
 
         # Toggle and action controls bottom-right
         toggles = QHBoxLayout()
