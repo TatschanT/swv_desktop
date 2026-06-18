@@ -2,6 +2,45 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.2.1] - 2026-06-18
+
+### Added: Full-band Scaling Mode
+
+Previously, the 3D pressure field was normalized per-frequency, making it
+impossible to compare relative loudness across frequencies. This release adds
+an optional **Full-band scaling** mode with a single normalization reference
+derived from the global maximum pressure across the entire frequency band.
+
+#### New Controls (below the frequency slider)
+
+- **Full-band scaling** checkbox — toggles cross-frequency normalization on/off
+- **Calibrate** button — launches an accurate full-band background sweep
+- Progress label — shows live sweep progress ("Calibrating... 34%")
+
+#### Two-tier Operation
+
+- **Approximate mode** (instant): uses the peak of the already-computed 1D
+  response curve to compute one reference 3D field. Activates immediately on toggle.
+- **Accurate mode** (after Calibrate): `CalibWorker` (QThread) sweeps all
+  frequencies in `FREQ_1D_STEP` steps, collecting the spatial maximum at each.
+  Runs in the background; UI remains interactive. Cache persists until geometry changes.
+
+#### Cache Invalidation
+
+Triggered by any parameter that affects the 3D field (room dimensions, speaker/mic
+positions, wall reflections, source count, phase mode, room scatter).
+**Not** triggered by display-only parameters: **Show room modes** and
+**Listening Area** (neither affects `calc_tensor_space()`).
+
+#### Files Changed
+
+| File | Change |
+|---|---|
+| `render.py` | `_normalize()` and `update_mesh()` accept optional `global_max` param |
+| `main.py` | Added `CalibWorker`, full-band state management, and UI controls |
+| `physics.py` | Unchanged |
+| `graphs.py` | Unchanged |
+
 ## [1.2.0] - 2026-06-10
 ### Added
 - **Room Scatter Slider**: Added a dynamic UI slider ("Advanced Acoustics" section) to simulate room order damping. The physics engine applies an $n^2$ (square of the mode order) penalty to high-order modes, accurately simulating wave scattering by furniture and irregular walls.

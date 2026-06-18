@@ -1021,40 +1021,38 @@ class MainWindow(QMainWindow):
         )
         blay.addWidget(self.freq_slider)
 
-        # Full-band scaling controls (LEFT side, below the frequency slider).
-        # Checkbox toggles cross-frequency normalization; Calibrate runs the
-        # accurate background sweep; the label reports sweep progress.
-        fullband_row = QHBoxLayout()
-        fullband_row.setContentsMargins(0, 0, 0, 0)
+        # Controls row: Full-band scaling (left) + render toggles (right)
+        controls_row = QHBoxLayout()
+        controls_row.setContentsMargins(0, 0, 0, 0)
+
         self.fullband_chk = QCheckBox("Full-band scaling")
         self.fullband_chk.setFont(mono(9, bold=True))
-        fullband_row.addWidget(self.fullband_chk)
+        controls_row.addWidget(self.fullband_chk)
+
         self.calibrate_btn = QPushButton("Calibrate")
         self.calibrate_btn.setFont(mono(9, bold=True))
         self.calibrate_btn.setEnabled(False)
-        fullband_row.addWidget(self.calibrate_btn)
+        controls_row.addWidget(self.calibrate_btn)
+
         self.calib_progress_lbl = QLabel("")
         self.calib_progress_lbl.setFont(mono(9))
-        fullband_row.addWidget(self.calib_progress_lbl)
-        fullband_row.addStretch()
-        blay.addLayout(fullband_row)
+        controls_row.addWidget(self.calib_progress_lbl)
 
-        # Toggle and action controls bottom-right
-        toggles = QHBoxLayout()
-        toggles.addStretch()
-        # 3D render-mode switch: volume (dense) vs. contour ("clear visibility").
-        # Toggling it neither changes the physics nor the 2D response, so it is
-        # routed to a lightweight 3D-only handler (see _wire_3d_signals).
+        controls_row.addStretch()
+
         self.contour_chk = QCheckBox("Contour Mode")
         self.contour_chk.setFont(mono(9, bold=True))
-        toggles.addWidget(self.contour_chk)
+        controls_row.addWidget(self.contour_chk)
+
         self.dynamic_chk = QCheckBox("Dynamic update")
         self.dynamic_chk.setFont(mono(9, bold=True))
-        toggles.addWidget(self.dynamic_chk)
+        controls_row.addWidget(self.dynamic_chk)
+
         self.reset_view_btn = QPushButton("Reset View")
         self.reset_view_btn.setFont(mono(9, bold=True))
-        toggles.addWidget(self.reset_view_btn)
-        blay.addLayout(toggles)
+        controls_row.addWidget(self.reset_view_btn)
+
+        blay.addLayout(controls_row)
 
         lay.addWidget(bottom)
 
