@@ -15,7 +15,7 @@ If it proves useful to anyone out there, I couldn’t be happier.
   Supports both Mono and Stereo configurations with three calculation modes:
   - **Uncorrelated (Independent Power Sum)**: Adds acoustic power without wave interference. It's perfect for visualizing the room's default state.
   - **Global Cancel**: A fast approximation model for phase cancellation. This is particularly valuable when sound sources are arranged symmetrically.
-  - **In-Phase (True Complex Field - Experimental)**: The ultimate physics engine. It synthesizes the exact complex field (real + imaginary parts) across the entire 3D space, perfectly reproducing the spatial warping of wave nodes when subwoofers are placed asymmetrically. However, in the real world, the perfect interference that is theoretically possible is not perceived. This is because various scattering factors are present. Furthermore, actual sound sources are not point sources, and the range of human perception is not limited to a single point.
+  - **True Complex Field - Experimental**: The ultimate physics engine. It synthesizes the exact complex field (real + imaginary parts) across the entire 3D space, perfectly reproducing the spatial warping of wave nodes when subwoofers are placed asymmetrically. However, in the real world, the perfect interference that is theoretically possible is not perceived. This is because various scattering factors are present. Furthermore, actual sound sources are not point sources, and the range of human perception is not limited to a single point.
 - **Advanced Acoustics**
 To bridge the gap between ideal theoretical physics and real-world perception, use the Advanced Acoustics sliders:
   - **Room Scatter (Order Damping)**: Real rooms have furniture that scatters high-frequency tangential and oblique modes. This slider applies an $n^2$ penalty to high-order modes, allowing you to dial in the "liveliness" of your specific space.
@@ -27,6 +27,7 @@ To bridge the gap between ideal theoretical physics and real-world perception, u
 - When **Contour mode** is enabled, the sound pressure distribution display switches to contour mode, providing a clearer view (though the amount of information displayed decreases)
 - When you turn on **Dynamic mode toggle**, the sound pressure distribution follows all parameter adjustments (requires power)
 - **Reset View**: Returns the camera to its initial position.
+- **NEW in v1.2.2** When the **Full-band Scaling** toggle is turned on, the rendering scale is normalized to the distribution across the entire frequency range. Turning the toggle on applies a rough scaling adjustment, but pressing the **Calibration** button calculates the sound pressure distribution across the entire frequency range more precisely and calibrates the scale to a median of -24 dB to +15 dB (this takes a few seconds).
 - **Basic Mouse Operations**
   - Moving the mouse while holding down the left mouse button rotates the view.
   - Moving the mouse up or down while holding the right mouse button zooms in or out. Scrolling the mouse wheel also zooms in or out.
