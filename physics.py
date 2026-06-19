@@ -1,3 +1,4 @@
+import math
 import numpy as np
 from dataclasses import dataclass
 import config as app_config
@@ -57,6 +58,67 @@ def calc_room_modes(room: RoomConfig, max_order: int = 4, max_freq: float = None
 
     modes.sort(key=lambda m: m[0])
     return modes
+
+# Wall name -> the two room dimensions whose product is that wall's area.
+# Keys match the UI's wall-reflection sliders (main.py).
+_WALL_AREA_DIMS = {
+    "Left (X=0)":     ("ly", "lz"),
+    "Right (X=Lx)":   ("ly", "lz"),
+    "Front (Y=0)":    ("lx", "lz"),
+    "Back (Y=Ly)":    ("lx", "lz"),
+    "Floor (Z=0)":    ("lx", "ly"),
+    "Ceiling (Z=Lz)": ("lx", "ly"),
+}
+
+def schroeder_frequency(lx: float, ly: float, lz: float, wall_reflections: dict) -> float:
+    """Estimate the Schroeder frequency (Hz) of a rectangular room.
+
+    The Schroeder frequency marks the transition between the modal region
+    (isolated, well-separated resonances -- where this simulation is physically
+    meaningful) and the diffuse statistical region above it.
+
+    It is derived from the Sabine reverberation time:
+
+        RT60 = 0.161 * V / A          [s]   (A = total absorption, V = volume)
+        f_s  = 2000 * sqrt(RT60 / V)  [Hz]
+
+    Each wall's absorption coefficient is ``alpha = 1 - r**2`` from its
+    reflection coefficient ``r``. The total absorption ``A`` uses the
+    area-weighted average absorption over the six walls, i.e.
+    ``A = S_total * mean_alpha = sum(area_i * alpha_i)``.
+
+    Args:
+        lx, ly, lz: room dimensions (m).
+        wall_reflections: maps each wall name to its reflection coefficient in
+            [0, 1]. Recognised keys match the UI sliders -- see _WALL_AREA_DIMS.
+
+    Returns:
+        The Schroeder frequency in Hz, or ``0.0`` when the room is effectively
+        fully reflective (total absorption ~ 0, so RT60 diverges and the
+        Schroeder frequency is undefined).
+    """
+    dims = {"lx": lx, "ly": ly, "lz": lz}
+    volume = lx * ly * lz
+    if volume <= 0.0:
+        return 0.0
+
+    total_area = 0.0
+    total_absorption = 0.0
+    for name, (da, db) in _WALL_AREA_DIMS.items():
+        r = wall_reflections[name]
+        area = dims[da] * dims[db]
+        total_area += area
+        total_absorption += area * (1.0 - r * r)
+
+    if total_absorption <= 1e-9:
+        return 0.0
+
+    # Area-weighted average absorption -> Sabine total absorption A.
+    mean_alpha = total_absorption / total_area
+    A = total_area * mean_alpha
+    rt60 = 0.161 * volume / A
+    return 2000.0 * math.sqrt(rt60 / volume)
+
 # Normalization constant (Modal Norm) for volume integration of the wave equation
 MODAL_NORMS = (0.25, 0.5, 1.0, 0.0) 
 def get_modal_norm(nx, ny, nz):

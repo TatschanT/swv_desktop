@@ -375,6 +375,9 @@ class MainWindow(QMainWindow):
         self._wire_3d_signals()
         self._refresh(recompute_response=True)
 
+        # Populate the Schroeder-frequency label from the startup state.
+        self._update_schroeder_display()
+
     # ------------------------------------------------------------------
     # LEFT PANEL
     # ------------------------------------------------------------------
@@ -554,6 +557,25 @@ class MainWindow(QMainWindow):
                 cells = ["", "", ""]
             for c, text in enumerate(cells):
                 table.setItem(r, c, QTableWidgetItem(text))
+
+    # ------------------------------------------------------------------
+    # CONTROLLER: Schroeder frequency estimate
+    # ------------------------------------------------------------------
+    def _update_schroeder_display(self, *_):
+        """Recompute the Schroeder-frequency estimate from the current room
+        dimensions and per-wall reflection coefficients, then update the label.
+
+        Cheap pure arithmetic (no physics field computation), so this is wired to
+        ``valueChanged`` and runs live while sliders are dragged. Accepts/ignores
+        any positional arg so it can connect straight to a slider signal."""
+        fs = physics.schroeder_frequency(
+            self.room.x.value(), self.room.y.value(), self.room.z.value(),
+            {name: s.value() for name, s in self.wall_sliders.items()},
+        )
+        if fs <= 0.0:
+            self.schroeder_lbl.setText("Est. Schroeder: —")
+        else:
+            self.schroeder_lbl.setText(f"Est. Schroeder: ~{fs:.0f} Hz")
 
     # ------------------------------------------------------------------
     # CONTROLLER: 3D pressure field
@@ -1137,6 +1159,7 @@ class MainWindow(QMainWindow):
         self._sync_position_limits()
         self._sync_symmetry()
         self.update_room_modes()
+        self._update_schroeder_display()
         self._refresh(recompute_response=True)
         self._invalidate_calibration()
 
@@ -1185,6 +1208,13 @@ class MainWindow(QMainWindow):
         for slider in self.wall_sliders.values():
             slider.valueChanged.connect(self._on_param_changed)
             slider.committed.connect(self._on_param_committed)
+
+        # Schroeder-frequency estimate: cheap arithmetic, so update live on any
+        # room-dimension or wall-reflection change (valueChanged, not committed).
+        for axis in (self.room.x, self.room.y, self.room.z):
+            axis.valueChanged.connect(self._update_schroeder_display)
+        for slider in self.wall_sliders.values():
+            slider.valueChanged.connect(self._update_schroeder_display)
 
         # Advanced-acoustics: room_scatter feeds calc_tensor_space (geometry
         # change -> invalidates calibration); listening_area only affects the
@@ -1246,6 +1276,12 @@ class MainWindow(QMainWindow):
         # (Spatial Smoothing moved to the right-panel "Listening Area" slider.)
         smooth_row = QHBoxLayout()
         smooth_row.setContentsMargins(0, 0, 0, 0)
+        # Read-only Schroeder-frequency estimate, sitting just below the
+        # frequency-response curve. Updated live from room dims + wall sliders.
+        self.schroeder_lbl = QLabel("Est. Schroeder: —")
+        self.schroeder_lbl.setFont(mono(9))
+        self.schroeder_lbl.setStyleSheet("color: #aaaaaa;")
+        smooth_row.addWidget(self.schroeder_lbl)
         smooth_row.addStretch()
         self.show_modes_chk = QCheckBox("Show room modes")
         self.show_modes_chk.setFont(mono(9, bold=True))

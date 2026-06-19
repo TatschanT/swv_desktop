@@ -1,6 +1,6 @@
 # Standing Wave Viewer — Session Handoff Document
 **Date:** 2026-06-19  
-**Status:** **V1.2.2 STABLE** ✅ — Full-band scaling complete (approximate + accurate modes). Session closed.  
+**Status:** **V1.3.0 STABLE** ✅ — Room Data Import + Schroeder Frequency Display complete. Session closed.  
 **Project:** `swv_desktop` (`/home/ttatsuta/Projects/swv_desktop`)  
 **Venv:** `.venv/` (Python 3.14, PySide6 6.11, PyVista 0.48, pyvistaqt 0.11, Matplotlib 3.10, NumPy 2.4)
 
@@ -60,6 +60,13 @@
 | Approximate mode | Instant: one 3D field at the 1D-response peak; `_global_max` used as normalisation reference |
 | Accurate mode | `CalibWorker` (QThread) sweeps all frequencies; UI stays interactive during sweep |
 | Cache invalidation | Cleared on any geometry change; display-only params (Show modes, Listening Area) do NOT invalidate |
+
+### V1.3.0 (Room Data Import + Schroeder Frequency Display)
+
+| Feature | Deliverable |
+|---------|-------------|
+| Room Data Import | "Import data" button between Export/Settings; reads `[Parameters]` section of exported CSV; validates all values before applying any; signals blocked during batch-set; single recompute after import; clean error dialog on any failure |
+| Schroeder Frequency Display | `schroeder_frequency()` in `physics.py`; live-updating `Est. Schroeder: ~NNN Hz` label beneath the frequency-response curve; `valueChanged` wired to all room-dim + wall-reflection sliders |
 
 ### V1.2.2 (Full-band scaling — accurate mode normalization overhaul)
 
@@ -260,6 +267,10 @@ swv_desktop/
 │                   #     _on_calib_finished()
 │                   #   _on_display_param_committed() — display-only handler
 │                   #   symmetry logic, export, settings dialog opener
+│                   #   on_import_clicked / _read_parameters_section /
+│                   #     _parse_imported_params / _apply_imported_params —
+│                   #     CSV import (V1.3.0)
+│                   #   _update_schroeder_display() — live label (V1.3.0)
 │                   #   Entry point: main()
 │
 ├── render.py       # View — 3D (PyVista)
@@ -289,10 +300,11 @@ swv_desktop/
 │                   #   Mutates config in place, emits settings_applied
 │                   #   Uses get_user_data_path() for settings.json
 │
-├── physics.py      # Model — physics engine (DO NOT MODIFY)
+├── physics.py      # Model — physics engine
 │                   #   RoomConfig, Position dataclasses
 │                   #   calc_room_modes(), calc_tensor_space()
 │                   #   compute_f_response_1d(), compute_tensor_3d()
+│                   #   schroeder_frequency() — Sabine/Schroeder estimate (V1.3.0)
 │
 ├── config.py       # Model — constants + path helpers
 │                   #   get_resource_path()  — bundled read-only assets
@@ -388,162 +400,63 @@ cd /home/ttatsuta/Projects/swv_desktop
 
 ---
 
-## 13. Next Session Roadmap — V1.3
+## 13. Completed Tasks (V1.3.0)
 
-Two features are planned. Neither touches `physics.py` or `graphs.py`.
+### Feature A — Room Data Import (`main.py`) ✅
 
----
+**UI:** Export/Import/Settings buttons sit in one toolbar row, all at `mono(9, bold)` / `setFixedHeight(34)`.
 
-### Feature A — Room Data Import
+**New methods on `MainWindow`:**
 
-**Goal:** Parse a previously exported CSV file and restore room dimensions, speaker/mic positions, and wall reflection coefficients into the UI sliders, then trigger a full recomputation.
+| Method | Role |
+|--------|------|
+| `on_import_clicked` | File dialog → parse → validate → apply or abort |
+| `_read_parameters_section(path)` | `csv.reader` walk; collects `{name: value}` from `[Parameters]` only |
+| `_parse_imported_params(raw)` | Type-converts and validates all values; raises `KeyError`/`ValueError` on bad input |
+| `_phase_label_to_index(label)` | Case-insensitive substring match → combo index |
+| `_import_set_slider(slider, value)` | Clamp to `[_vmin, _vmax]` + log warning on clamp |
+| `_apply_imported_params(v)` | Block all signals → set room dims first → re-sync limits → set rest → unblock → single refresh |
 
-**UI placement:** Add an "Import data" button immediately to the **left of** the existing "Export data" button in the right-panel button row. The row currently reads `[Export data] [Settings]`; it should become `[Import data] [Export data] [Settings]`.
+**Signal-storm prevention:** `blockSignals(True)` on every affected `LabeledSlider` and `QComboBox` during batch-set. Room dimensions applied before speaker/mic so position-slider maxima are correct when those values land.
 
-**CSV format to parse** (produced by the existing `on_export_clicked`):
-
-```
-[Parameters]
-Parameter,Value
-Room Lx (m),3.500
-Room Ly (m),2.600
-Room Lz (m),2.400
-Speaker 1 (x,y,z),"0.500, 0.500, 0.500"
-Speaker 2 (x,y,z),"3.000, 0.500, 0.500"   ← only present when num_src == 2
-Mic (x,y,z),"1.750, 1.300, 1.200"
-Reflection Rx,0.800
-Reflection Ry,0.800
-Reflection Rz,0.800
-Wall Left (X=0),0.80
-Wall Right (X=Lx),0.80
-Wall Front (Y=0),0.80
-Wall Back (Y=Ly),0.80
-Wall Floor (Z=0),0.80
-Wall Ceiling (Z=Lz),0.80
-Frequency (Hz),40.0
-Source count,1
-Phase correction,Uncorrected
-Room scatter,0.00
-Listening area (m),0.00
-```
-
-**Implementation notes:**
-
-1. **Parsing:** Use `csv.reader`. Walk rows until `Parameter` header is found, then collect `{parameter_name: value}`. Stop at the first blank row or `[Frequency Response]` header. Wrap in `try/except` with a `QMessageBox.critical` on failure.
-
-2. **Signal storm prevention:** Before setting any slider, call `self.blockSignals(True)` on the entire `QApplication` or — safer — call `slider.blockSignals(True)` on every affected widget individually. Restore after all sliders are set, then call `_refresh(recompute_response=True)` and `_invalidate_calibration()` exactly once.
-   - **Preferred pattern:** collect all values into a dict first, validate them, then set all sliders in one batch with signals blocked.
-
-3. **Slider set order matters:** Set room dimensions first (`self.room.x.setValue`, etc.) so the `_limit_axis` clamping is correct when speaker/mic values are applied. Without this, a speaker position parsed before its room axis may get silently clamped to the old (smaller) room.
-
-4. **Safe value setting helper:** Write a private method `_import_set_slider(slider, value)` that clamps the value to `[slider._vmin, slider._vmax]` before calling `setValue`, and logs a warning (not an error) if clamping occurs. This keeps import robust against values that were valid when exported but fall outside the current config limits.
-
-5. **Source count / phase / combo boxes:** Map the string values back to combo index:
-   - `Source count`: `"1"` → index 0, `"2"` → index 1.
-   - `Phase correction`: `"Uncorrected"` → 0, `"Global Cancel"` → 1, `"True Complex Field"` → 2.
-   - Set with `combo.setCurrentIndex(...)` (not `setCurrentText`) to be locale-safe.
-
-6. **Speaker 2 / symmetry link:** Import should set Speaker 2 only if the CSV contains a `Speaker 2` row AND `Source count == 2`. Leave the symmetry link checkbox untouched (user preference, not a room parameter).
-
-7. **Frequency, Room scatter, Listening area:** These are also importable — set the `freq_slider`, `room_scatter`, and `listening_area` sliders directly from the CSV values if present.
-
-8. **Partial imports:** Missing keys should be skipped gracefully (use `.get(key)` with a fallback of `None`, then only set the slider if the value is not None).
-
-9. **After import:** Call `_sync_position_limits()` to re-apply room-dimension caps to speaker/mic sliders, `_sync_symmetry()` if the symmetry link is active, `update_room_modes()` for the modes table, then `_refresh(recompute_response=True)` and `_invalidate_calibration()`.
-
-10. **Do NOT use `get_user_data_path`** for the import file — it comes from wherever the user browsed with `QFileDialog.getOpenFileName`. Use `QFileDialog.getOpenFileName(self, "Import Data", "", "CSV files (*.csv)")`.
+**Post-import sequence:** `_update_source_state()` → `_sync_position_limits()` → `_sync_symmetry()` → `update_room_modes()` → `_update_schroeder_display()` → `_refresh(recompute_response=True)` → `_invalidate_calibration()`.
 
 ---
 
-### Feature B — Schroeder Frequency Display
+### Feature B — Schroeder Frequency Display (`physics.py`, `main.py`) ✅
 
-**Goal:** Display the Schroeder frequency and estimated RT60 in the UI as a guideline for the effective upper frequency limit of the modal simulation.
+**`physics.schroeder_frequency(lx, ly, lz, wall_reflections: dict) -> float`:**
+- `_WALL_AREA_DIMS` maps each wall name → the two dimension keys whose product is area.
+- `α_i = 1 − r_i²`; total absorption `A = Σ(area_i · α_i)`.
+- `RT60 = 0.161 · V / A`; `f_s = 2000 · √(RT60/V)`.
+- Returns `0.0` when A ≤ 1e-9 (fully reflective, divergence guard) or V ≤ 0.
 
-**Physical background:**
+**UI:** `schroeder_lbl` (`mono(9)`, `#aaaaaa`) in the row beneath the frequency-response curve (left of "Show room modes" checkbox). Formatted as `Est. Schroeder: ~NNN Hz` or `Est. Schroeder: —`.
 
-```
-Sabine's formula:
-  RT60 = 0.161 × V / A_total
-  where V = Lx × Ly × Lz  [m³]
-        A_total = Σ (surface_area_i × α_i)  [m²]
-        α_i = 1 - R_i²   (absorption coefficient from reflection coeff)
-
-Schroeder frequency:
-  f_S = 2000 × sqrt(RT60 / V)   [Hz]
-```
-
-**Per-wall absorption terms** (use individual wall reflection coefficients, not the averaged Rx/Ry/Rz used by the physics engine):
-
-| Wall | Area | Reflection coeff | Absorption |
-|------|------|-----------------|------------|
-| Left (X=0) | Ly × Lz | R_left | (1 − R_left²) × Ly × Lz |
-| Right (X=Lx) | Ly × Lz | R_right | (1 − R_right²) × Ly × Lz |
-| Front (Y=0) | Lx × Lz | R_front | (1 − R_front²) × Lx × Lz |
-| Back (Y=Ly) | Lx × Lz | R_back | (1 − R_back²) × Lx × Lz |
-| Floor (Z=0) | Lx × Ly | R_floor | (1 − R_floor²) × Lx × Ly |
-| Ceiling (Z=Lz) | Lx × Ly | R_ceil | (1 − R_ceil²) × Lx × Ly |
-
-**UI placement:** Add a read-only `QLabel` inside the **"Advanced Acoustics"** `QGroupBox` in the right panel, below the two existing sliders. Display two values on one line (or two short lines):
-
-```
-RT60 ≈ 0.45 s    Schroeder ≈ 134 Hz
-```
-
-Font: `mono(9)`, colour `#aaaaaa` (secondary info tone). No border; styled with `QLabel.setStyleSheet("color: #aaaaaa;")`.
-
-**Update trigger:** Recalculate on every call that changes room dimensions or wall reflections — specifically, connect a dedicated helper `_update_schroeder_display()` to:
-- `self.room.x/y/z.valueChanged`
-- `slider.valueChanged` for each of the 6 wall sliders
-
-`valueChanged` (not `committed`) is correct here: the computation is cheap (pure arithmetic, no physics call), so it can update live while the user drags.
-
-**Implementation:**
-
-```python
-def _update_schroeder_display(self, *_):
-    import math
-    Lx, Ly, Lz = self.room.x.value(), self.room.y.value(), self.room.z.value()
-    V = Lx * Ly * Lz
-    w = self.wall_sliders
-    walls = [
-        (w["Left (X=0)"].value(),     Ly * Lz),
-        (w["Right (X=Lx)"].value(),   Ly * Lz),
-        (w["Front (Y=0)"].value(),    Lx * Lz),
-        (w["Back (Y=Ly)"].value(),    Lx * Lz),
-        (w["Floor (Z=0)"].value(),    Lx * Ly),
-        (w["Ceiling (Z=Lz)"].value(), Lx * Ly),
-    ]
-    A = sum((1.0 - R**2) * area for R, area in walls)
-    if A < 1e-9:
-        self.schroeder_lbl.setText("RT60: —    Schroeder: —")
-        return
-    rt60 = 0.161 * V / A
-    fs = 2000.0 * math.sqrt(rt60 / V)
-    self.schroeder_lbl.setText(f"RT60 ≈ {rt60:.2f} s    Schroeder ≈ {fs:.0f} Hz")
-```
-
-**Wire-up:** In `_wire_3d_signals`, connect `_update_schroeder_display` to the 9 signals listed above. Also call `_update_schroeder_display()` once at the end of `__init__` (after the panels are built) to populate the label on startup.
-
-**Edge cases:**
-- `A < 1e-9` (all walls perfectly reflective, R=1): absorption is zero, Sabine's formula diverges. Show dashes.
-- `V` is always positive (room sliders have a minimum of 1.0 m), so no guard needed there.
-- The Schroeder frequency naturally updates immediately on any room or wall change because it uses `valueChanged` — no `committed` delay.
+**`_update_schroeder_display(*_)`:** calls `physics.schroeder_frequency` with current room dims + wall slider values; wired to `valueChanged` of all three room-dim sliders and all six wall sliders (live, main thread). Also called once at end of `__init__` and inside `_apply_imported_params`.
 
 ---
 
-## 14. Session Conclusion
+## 14. Next Session Roadmap
 
-**V1.2.2 is a stable, feature-complete milestone for the Full-band Scaling development phase.** The accurate-mode normalisation is now perceptually robust across all phase modes including True Complex Field.
+No features are currently planned. Outstanding nice-to-haves from prior sessions:
+
+---
+
+**Both V1.3.0 features are implemented.** See section 13 above for full implementation detail.
+
+---
+
+## 15. Session Conclusion
+
+**V1.3.0 is a stable, feature-complete milestone.** Room Data Import and Schroeder Frequency Display are both complete and tested.
 
 **This session is officially closed.** The next session should:
 1. Read this document and `CHANGELOG.md` first.
-2. Implement Feature A (Room Data Import) — no physics changes needed, pure UI/controller work.
-3. Implement Feature B (Schroeder Frequency Display) — pure arithmetic, live-updating label.
-
-Both features are self-contained and can be implemented in either order, though Feature A is more complex.
+2. No features are currently queued — pick from the nice-to-haves below or a new brief.
 
 **Outstanding nice-to-haves (no commitment):**
 - `SMOOTHING_SAMPLES` re-exposed in Settings under a clearer name (`LISTENING_AREA_SAMPLES`).
 - Windows `.exe` packaging: PyInstaller `.spec` file.
 - Per-mode scalar bar, contour opacity slider, export of the 3D field to VTK/VTI format, mode labels on the guide lines.
-- The `calib_db_range` asymmetry may need further tuning based on user feedback — the current implementation clips at `1.0` (ratio upper bound), which effectively makes the upper window 0 dB (values above the median all map to 0.5). A `10.0` upper clip would give a true +20 dB upper window if that turns out to be preferable.
+- The `calib_db_range` asymmetry may need further tuning — the current implementation clips the ratio upper bound at `1.0`, making the upper dB window effectively 0 dB (values above the median all map to 0.5). A `10.0` clip would give a true +20 dB upper window if that proves preferable.

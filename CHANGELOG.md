@@ -2,6 +2,66 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.3.0] - 2026-06-19
+
+### Added: Room Data Import
+
+A new **Import data** button now sits between the Export data and Settings
+buttons in the right-panel toolbar. Clicking it opens a file dialog filtered to
+`*.csv` and restores the full application state from a previously exported file.
+
+The import reads the `[Parameters]` section only (`[Frequency Response]` and
+`[Room Modes]` are ignored). All room and simulation parameters are restored:
+room dimensions, speaker positions (one or two sources), mic position, per-wall
+reflection coefficients, frequency, source count, phase correction mode, room
+scatter, and listening area.
+
+All UI sliders and combo boxes are updated in a single batch with signals
+blocked, so no per-parameter recompute or signal-storm fires during the import.
+Room dimensions are applied first so speaker/mic positions clamp against the
+imported room, not the previous one. A single recompute is triggered after all
+values are set.
+
+If any required parameter is missing or malformed the import is aborted before
+any state is applied; the user is shown an informative error dialog.
+
+**Files changed:** `main.py` (new `on_import_clicked`, `_read_parameters_section`,
+`_parse_imported_params`, `_phase_label_to_index`, `_import_set_slider`,
+`_apply_imported_params` methods; updated button row). `physics.py` unchanged.
+
+---
+
+### Added: Schroeder Frequency Display
+
+A read-only label **Est. Schroeder: ~142 Hz** now appears below the frequency-
+response curve, left of the "Show room modes" checkbox. It gives a quick
+acoustic context for the simulation's valid frequency range.
+
+The Schroeder frequency marks the transition from the modal region (isolated,
+well-separated resonances — where this app's simulation is physically meaningful)
+to the diffuse statistical region above it. It is estimated from Sabine's
+reverberation formula:
+
+```
+RT60 = 0.161 × V / A          (Sabine, V = volume, A = total absorption)
+f_s  = 2000 × sqrt(RT60 / V)
+```
+
+Each wall's absorption coefficient is derived from its reflection coefficient as
+`α = 1 − r²`; the total absorption is the area-weighted sum over all six walls.
+When all walls are fully reflective (R=1, A→0) the label shows a dash.
+
+The display updates live while the user drags any room-dimension or wall-
+reflection slider (cheap arithmetic, runs on the main thread with no physics
+call).
+
+**Files changed:** `physics.py` (new `schroeder_frequency()` function + helper
+`_WALL_AREA_DIMS` table; `import math` added). `main.py` (new `schroeder_lbl`
+widget, `_update_schroeder_display()` method, live signal wiring, startup
+population, and post-import refresh).
+
+---
+
 ## [1.2.2] - 2026-06-18
 
 ### Fixed: Full-band Scaling — Accurate Mode Normalization
