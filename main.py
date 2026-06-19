@@ -8,6 +8,7 @@ os.environ["QT_ENABLE_HIGHDPI_SCALING"] = "0"
 
 import csv
 import sys
+from collections import namedtuple
 from datetime import datetime
 
 import numpy as np
@@ -52,6 +53,13 @@ RIGHT_W = 340
 TOP_H = 340
 BOTTOM_H = 660
 BANNER_H = 72
+
+# The physics parameters shared by the 3D field, 1D response and calibration
+# sweep. Built by MainWindow._physics_snapshot() so every consumer reads the
+# same derived state.
+PhysicsSnapshot = namedtuple(
+    "PhysicsSnapshot", "room spk1 spk2 mic num_src corr room_scatter"
+)
 
 
 class CalibWorker(QThread):
@@ -389,6 +397,24 @@ class MainWindow(QMainWindow):
             return "Global Cancel"
         return "Uncorrelated"
 
+    def _num_src(self):
+        """Active source count (1 or 2) from the Source combo."""
+        return 2 if self.source_combo.currentText() == "2" else 1
+
+    def _physics_snapshot(self):
+        """Bundle the current UI state into the parameter set shared by the 3D
+        field, the 1D response, and the full-band calibration sweep. Centralises
+        the room/position/source/phase/scatter reads so call sites can't drift."""
+        return PhysicsSnapshot(
+            room=self._current_room(),
+            spk1=self._pos(self.spk1),
+            spk2=self._pos(self.spk2),
+            mic=self._pos(self.mic),
+            num_src=self._num_src(),
+            corr=self._corr_mode(),
+            room_scatter=self.room_scatter.value(),
+        )
+
     def _refresh(self, recompute_response):
         """Refresh the 3D field and the 2D plots from the current UI state.
 
@@ -398,15 +424,10 @@ class MainWindow(QMainWindow):
         only the marker line is moved (frequency change) -- the curve itself is
         frequency-independent.
         """
-        room = self._current_room()
-        spk1 = self._pos(self.spk1)
-        spk2 = self._pos(self.spk2)
-        mic = self._pos(self.mic)
-        num_src = 2 if self.source_combo.currentText() == "2" else 1
-        corr = self._corr_mode()
+        s = self._physics_snapshot()
+        room, spk1, spk2, mic = s.room, s.spk1, s.spk2, s.mic
+        num_src, corr, room_scatter = s.num_src, s.corr, s.room_scatter
         freq = self.freq_slider.value()
-
-        room_scatter = self.room_scatter.value()
         listening_area = self.listening_area.value()
 
         mode_freqs = None
@@ -524,16 +545,10 @@ class MainWindow(QMainWindow):
         linear = 10 ** (np.asarray(db) / 20.0)
         peak_freq = float(freqs[int(np.argmax(linear))])
 
-        room = self._current_room()
-        spk1 = self._pos(self.spk1)
-        spk2 = self._pos(self.spk2)
-        num_src = 2 if self.source_combo.currentText() == "2" else 1
-        corr = self._corr_mode()
-        room_scatter = self.room_scatter.value()
-
+        s = self._physics_snapshot()
         field = physics.calc_tensor_space(
-            room, spk1, spk2, num_src, corr, peak_freq,
-            grid_size=self.render3d.grid_size, room_scatter=room_scatter,
+            s.room, s.spk1, s.spk2, s.num_src, s.corr, peak_freq,
+            grid_size=self.render3d.grid_size, room_scatter=s.room_scatter,
         )
         self._global_max = float(field.max())
         self._calib_median = None
@@ -571,15 +586,9 @@ class MainWindow(QMainWindow):
         if self._calib_worker is not None:
             return  # already running
 
-        room = self._current_room()
-        spk1 = self._pos(self.spk1)
-        spk2 = self._pos(self.spk2)
-        num_src = 2 if self.source_combo.currentText() == "2" else 1
-        corr = self._corr_mode()
-        room_scatter = self.room_scatter.value()
-
+        s = self._physics_snapshot()
         worker = CalibWorker(
-            room, spk1, spk2, num_src, corr, room_scatter,
+            s.room, s.spk1, s.spk2, s.num_src, s.corr, s.room_scatter,
             self.render3d.grid_size,
         )
         self._calib_worker = worker
@@ -622,8 +631,7 @@ class MainWindow(QMainWindow):
         EXISTING field and flips actor visibility (no physics recompute, no 2D
         redraw). Camera is preserved -- ``set_render_mode`` only does
         SetVisibility + in-place copy_from."""
-        num_src = 2 if self.source_combo.currentText() == "2" else 1
-        self.render3d.set_render_mode(self.contour_chk.isChecked(), num_src)
+        self.render3d.set_render_mode(self.contour_chk.isChecked(), self._num_src())
 
     def _on_reset_view(self):
         """Forcefully restore the default isometric view of the current room.
@@ -668,9 +676,8 @@ class MainWindow(QMainWindow):
             path += ".csv"
 
         # Gather current state.
-        room = self._current_room()
-        spk1, spk2, mic = self._pos(self.spk1), self._pos(self.spk2), self._pos(self.mic)
-        num_src = 2 if self.source_combo.currentText() == "2" else 1
+        s = self._physics_snapshot()
+        room, spk1, spk2, mic, num_src = s.room, s.spk1, s.spk2, s.mic, s.num_src
         w = self.wall_sliders
         modes = physics.calc_room_modes(room)
 
