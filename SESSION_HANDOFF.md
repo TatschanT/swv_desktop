@@ -1,6 +1,6 @@
 # Standing Wave Viewer — Session Handoff Document
-**Date:** 2026-06-10  
-**Status:** **V1.2.0 STABLE** ✅ — Advanced acoustics sliders, unified frequency config, and tech-debt cleanup complete. Session closed.  
+**Date:** 2026-06-19  
+**Status:** **V1.2.2 STABLE** ✅ — Full-band scaling complete (approximate + accurate modes). Session closed.  
 **Project:** `swv_desktop` (`/home/ttatsuta/Projects/swv_desktop`)  
 **Venv:** `.venv/` (Python 3.14, PySide6 6.11, PyVista 0.48, pyvistaqt 0.11, Matplotlib 3.10, NumPy 2.4)
 
@@ -43,11 +43,38 @@
 | Mode Energy Weighting (mode_norm) | Overhauled physics engine — Oblique and Tangential modes now carry less energy than Axial modes (realistic amplitude decay based on mode type, mirroring real-world wall reflections) |
 | Complex Field Accuracy | Fixed excessive cancellation zones (blue) at high frequencies and unnatural extreme peaks (red) in corners at low frequencies in "True Complex Field" mode |
 
+### V1.2.0 (Advanced acoustics — all complete)
+
+| Feature | Deliverable |
+|---------|-------------|
+| Room Scatter slider | Order-dependent modal damping in Advanced Acoustics group |
+| Listening Area slider | Continuous mic-cube RMS averaging; replaced boolean smoothing checkbox |
+| Unified frequency bounds | `MIN_FREQ`/`MAX_FREQ` single source of truth across physics + UI |
+| 2-sigma clipping | Robust normalisation in `render._normalize` to suppress hotspot wash-out |
+
+### V1.2.1 (Full-band scaling — initial implementation)
+
+| Feature | Deliverable |
+|---------|-------------|
+| Full-band scaling UI | Checkbox + Calibrate button + progress label below the frequency slider |
+| Approximate mode | Instant: one 3D field at the 1D-response peak; `_global_max` used as normalisation reference |
+| Accurate mode | `CalibWorker` (QThread) sweeps all frequencies; UI stays interactive during sweep |
+| Cache invalidation | Cleared on any geometry change; display-only params (Show modes, Listening Area) do NOT invalidate |
+
+### V1.2.2 (Full-band scaling — accurate mode normalization overhaul)
+
+| Feature | Deliverable |
+|---------|-------------|
+| Median-centred dB scale | `CalibWorker` now emits `(median_pressure, db_range)` instead of a single `global_max` |
+| Asymmetric dB window | `[−24 dB, +15 dB]` relative to the swept median (replaces symmetric ±20 dB) |
+| Two-tier cache | `_calib_median` / `_calib_db_range` for accurate mode; `_global_max` retained for approximate mode |
+| render._normalize | Three branches: accurate dB-window, approximate linear scale, per-frequency 2σ (default) |
+
 ---
 
 ## 2. Architectural Decisions & Critical Gotchas
 
-**These rules held across every V1.0 and V1.1 feature without exception. Future agents MUST follow them strictly — any deviation risks invisible renders, camera resets, or signal storms.**
+**These rules held across every version without exception. Future agents MUST follow them strictly — any deviation risks invisible renders, camera resets, or signal storms.**
 
 ### 2.1 VTK / PyVista Volume Rendering — In-Place Update Rule
 
@@ -87,17 +114,13 @@ self._vol_mapper.Modified()
 - `actor.SetVisibility(bool)` — hides/shows without removing (spk2 in mono mode, volume↔contour toggle)
 - `actor.SetBounds(...)` — repositions the CubeAxesActor
 
-**This rule was extended to the V1.1 contour actor:** the contour `PolyData` mesh is created once in `__init__`, regenerated in place with `contour_mesh.copy_from(self.grid.contour(...))` on each update, and the actor is shown/hidden with `SetVisibility`. No `add_mesh`/`remove_actor` ever runs on mode switch.
-
 **Camera refit exception:** On **room resize only**, call `self.plotter.reset_camera(bounds=self.grid.bounds)`. This recenters and steps back while preserving view direction (the user's rotation is kept). Detected via `room_resized = new_spacing != self._last_spacing`.
 
 ### 2.3 X-Ray Marker Overlay — Layer Collision
 
-**Problem:** `pyvistaqt.QtInteractor` adds its orientation-axes widget on **layer 1**. Placing the marker overlay on layer 1 (as a bare `Plotter` test suggested) causes the axes widget to overdraw the markers.
+**Problem:** `pyvistaqt.QtInteractor` adds its orientation-axes widget on **layer 1**. Placing the marker overlay on layer 1 causes the axes widget to overdraw the markers.
 
 **Fix:** In `_setup_overlay`, scan all existing renderers and pick `top_layer = max_existing_layer + 1` (lands on layer 2 in practice). Markers are moved from the main renderer into this overlay renderer; the overlay shares the main camera so everything stays synchronized.
-
-**V1.1 note:** The markers (spk1, spk2, mic) remain **visible in both Volume and Contour modes**. In Contour mode the field is transparent enough that they read cleanly. `_apply_visibility` in `render.py` now only gates spk2 on `num_src == 2` — it no longer touches spk1 or mic visibility.
 
 ### 2.4 Signal Gating — `valueChanged` vs `committed`
 
@@ -108,7 +131,7 @@ self._vol_mapper.Modified()
 | `valueChanged(float)` | Every tick while dragging | Lightweight live UI (QLineEdit text, moving the 2D graph marker line) |
 | `committed(float)` | `sliderReleased` + `editingFinished` | Heavy physics recompute (3D field, 1D freq response) |
 
-**Wiring matrix:**
+**Wiring matrix (current state):**
 
 ```
 Frequency slider:
@@ -118,35 +141,37 @@ Frequency slider:
   committed    → _on_freq_committed:
       _refresh(recompute_response=False)       # 3D update; freq-response curve is freq-independent
 
-Room / Speaker / Mic / Wall sliders:
+Room / Speaker / Mic / Wall sliders / room_scatter:
   valueChanged → _on_param_changed:
       if Dynamic ON: _refresh(recompute=True)  # live preview
   committed    → _on_param_committed:
-      _refresh(recompute_response=True)        # always recompute once on release
+      _refresh(recompute_response=True)        # recompute, THEN _invalidate_calibration()
+
+listening_area / Show room modes:
+  valueChanged → _on_param_changed (live preview)
+  committed / toggled → _on_display_param_committed:
+      _refresh(recompute_response=True)        # NO invalidation — 3D field unchanged
 
 Source / Phase combos:
-  currentIndexChanged → _on_param_committed    # discrete commits, always recompute
+  currentIndexChanged → _on_param_committed   # discrete commit, always invalidates
 
-Show room modes / Spatial Smoothing checkboxes:
-  toggled → _on_param_committed                # discrete commit → full 2D recompute
-
-Contour Mode checkbox:
-  toggled → _on_render_mode_changed            # lightweight 3D-only, NO physics/2D
+Full-band checkbox / Calibrate button:
+  toggled   → _on_fullband_toggled            # manages cache reuse, approx compute
+  clicked   → _on_calibrate_clicked           # launches CalibWorker
 ```
 
-**Result:** With Dynamic **OFF**, dragging does no heavy work but releases always trigger exactly one recompute. With Dynamic **ON**, you get live preview during drag AND a final recompute on release (idempotent).
+**Critical ordering in `_on_param_committed`:** calls `_refresh(recompute_response=True)` FIRST (so the 1D curve is fresh), THEN `_invalidate_calibration()` (which reads the fresh curve to compute the approximate reference).
 
 ### 2.5 Frequency Response — Recompute Trigger Logic
 
 The 1D frequency response curve is **independent of the current frequency** (it shows dB at *all* frequencies). Therefore:
 - Moving the frequency **slider** must NOT recompute the curve — only the vertical marker line moves.
-- Room / speaker / mic / wall / source / phase changes DO require a recompute.
-
-The `_db` array is cached on `Plot2DWidget` and `update_freq_marker` uses `np.interp` on it to display the dB value at the current freq, with no physics call.
+- Room / speaker / mic / wall / source / phase / room_scatter changes DO require a recompute.
+- `listening_area` and `show_modes_chk` ALSO trigger `recompute_response=True` (the 1D curve changes), but they do NOT invalidate the Full-band calibration cache.
 
 ### 2.6 Reflection Coefficients
 
-`RoomConfig.Rx/Ry/Rz` must not be zero — when `R=0`, `calc_shape(n, pos, L, 0)` collapses to a spatial constant, rendering the volume pressure field flat (invisible). Correct derivation (from `old_src/main.py`):
+`RoomConfig.Rx/Ry/Rz` must not be zero — when `R=0`, `calc_shape(n, pos, L, 0)` collapses to a spatial constant, rendering the volume pressure field flat (invisible). Correct derivation:
 
 ```python
 Rx = (wall_sliders["Left (X=0)"].value() + wall_sliders["Right (X=Lx)"].value()) / 2.0
@@ -163,9 +188,9 @@ From `old_src/main.py` (verified, not assumed):
 
 Additionally, `_sync_symmetry` is also triggered by `room.x.valueChanged` because `spk2.x` depends on `Lx`.
 
-### 2.8 PyInstaller Path Resolution (V1.1)
+### 2.8 PyInstaller Path Resolution
 
-Two helpers live at the top of `config.py` (imported by `main.py` and `settings_ui.py`):
+Two helpers live at the top of `config.py`:
 
 | Helper | When to use | How it works |
 |--------|------------|--------------|
@@ -174,21 +199,50 @@ Two helpers live at the top of `config.py` (imported by `main.py` and `settings_
 
 **Why the split matters:** `sys._MEIPASS` is a temporary extraction directory deleted when the `.exe` exits — any file written there is lost. Writable files MUST go to the directory containing the executable.
 
-### 2.9 HiDPI Scaling Lock (V1.1.1)
+### 2.9 HiDPI Scaling Lock
 
 `os.environ["QT_ENABLE_HIGHDPI_SCALING"] = "0"` is set at the very top of `main.py`, before any Qt imports. This hard-locks the window to its intended 1600×1000 physical pixels regardless of Windows Display Scaling. Without it, a 150% OS scaling setting would render the window at 2400×1500 — too large for a 1080p screen.
 
 **Rule:** This env-var must remain at the module top-level so it takes effect before `QApplication` initialises.
 
-### 2.10 Mode Energy Weighting — `mode_norm` (V1.1.2)
+### 2.10 Mode Energy Weighting — `mode_norm`
 
-In `physics.py`, mode amplitude is now weighted by mode type (Axial / Tangential / Oblique) to reflect real-world energy decay from wall reflections. The weighting factor is called `mode_norm`.
+In `physics.py`, mode amplitude is weighted by mode type (Axial / Tangential / Oblique) to reflect real-world energy decay from wall reflections:
 
 - **Axial** (one non-zero index): full amplitude — reflects off only 2 walls.
 - **Tangential** (two non-zero indices): reduced amplitude — reflects off 4 walls, more loss.
 - **Oblique** (all three indices non-zero): lowest amplitude — reflects off all 6 walls.
 
-**Rationale:** without weighting, all modes contribute equally regardless of how many wall interactions they undergo, producing physically incorrect pressure distributions (exaggerated peaks in corners at low freq; excessive cancellation at high freq in Complex Field mode). `mode_norm` corrects the relative contributions before summation. The old name `mode_weight` was replaced by `mode_norm` as of commit `bdec28a`.
+### 2.11 Full-band Scaling Architecture (V1.2.1–V1.2.2)
+
+**State variables on `MainWindow`:**
+
+| Variable | Type | Meaning |
+|----------|------|---------|
+| `_global_max` | `float \| None` | Approximate-mode linear reference (one 3D field at peak freq) |
+| `_calib_median` | `float \| None` | Accurate-mode swept median pressure (linear) |
+| `_calib_db_range` | `float` | Accurate-mode +/- dB half-window (currently 20.0 matching the signal; applied asymmetrically in `render.py`) |
+| `_calib_accurate` | `bool` | True only after a full Calibrate sweep completes |
+| `_calib_worker` | `CalibWorker \| None` | Running worker (identity-check used to detect stale results) |
+
+**`_normalize` dispatch order in `render.py`:**
+1. `calib_median` supplied → accurate dB-window: `db_vals = 20·log10(clip(values/calib_median, 1e-9, 1.0))`, then `(db_vals + db_range) / (2·db_range)` clipped to [0,1].
+2. `global_max` supplied → approximate: `clip(values/global_max, 0, 1)`.
+3. Neither → per-frequency 2σ (unchanged default).
+
+**Worker identity check:** `_on_calib_finished(median, db_range, worker)` guards `if worker is not self._calib_worker: return`. This silently discards results from a worker whose reference was dropped by `_invalidate_calibration` (geometry changed mid-sweep).
+
+**Thread safety:** `fullband_chk` and `calibrate_btn` are both disabled during a running sweep. `closeEvent` calls `worker.wait()` to prevent "QThread destroyed while running" on app exit.
+
+**Calibrate button state machine:**
+
+| Condition | Button text | Enabled |
+|-----------|-------------|---------|
+| Full-band OFF | "Calibrate" | No |
+| Full-band ON, no cache | "Calibrate" | Yes |
+| Full-band ON, approximate cache | "Calibrate" | Yes |
+| Full-band ON, accurate cache | "Calibrated ✓" | No |
+| Sweep running | "Calculating..." | No |
 
 ---
 
@@ -197,14 +251,23 @@ In `physics.py`, mode amplitude is now weighted by mode type (Axial / Tangential
 ```
 swv_desktop/
 ├── main.py      # Controller + View skeleton
+│                   #   CalibWorker(QThread) — full-band background sweep
 │                   #   MainWindow, LabeledSlider, XYZSliders
 │                   #   Signal wiring, _refresh(), _on_render_mode_changed()
+│                   #   Full-band scaling: _invalidate_calibration(),
+│                   #     _compute_approx_global_max(), _on_fullband_toggled(),
+│                   #     _on_calibrate_clicked(), _on_calib_progress(),
+│                   #     _on_calib_finished()
+│                   #   _on_display_param_committed() — display-only handler
 │                   #   symmetry logic, export, settings dialog opener
 │                   #   Entry point: main()
 │
 ├── render.py       # View — 3D (PyVista)
 │                   #   Render3D class: QtInteractor wrapper
 │                   #   In-place volume + contour + geometry updates
+│                   #   _normalize(values, global_max, calib_median, calib_db_range)
+│                   #     3-branch normalization: accurate dB / approx / 2σ default
+│                   #   update_mesh(..., global_max, calib_median, calib_db_range)
 │                   #   set_grid_size()     — camera-preserving grid rebuild
 │                   #   set_render_mode()   — visibility-only mode switch
 │                   #   _contour_levels()   — statistical iso-surface thresholds
@@ -215,6 +278,7 @@ swv_desktop/
 ├── graphs.py       # View — 2D (Matplotlib)
 │                   #   Plot2DWidget(FigureCanvasQTAgg)
 │                   #   Top-down room layout + freq response + dB annotation
+│                   #   _freqs, _db — cached for Full-band approx-mode reference
 │                   #   Room-mode guide lines (mode_freqs kwarg)
 │                   #   rebuild_freqs() — config-driven frequency axis
 │
@@ -225,7 +289,7 @@ swv_desktop/
 │                   #   Mutates config in place, emits settings_applied
 │                   #   Uses get_user_data_path() for settings.json
 │
-├── physics.py      # Model — physics engine
+├── physics.py      # Model — physics engine (DO NOT MODIFY)
 │                   #   RoomConfig, Position dataclasses
 │                   #   calc_room_modes(), calc_tensor_space()
 │                   #   compute_f_response_1d(), compute_tensor_3d()
@@ -239,162 +303,79 @@ swv_desktop/
 ├── images/         # Assets — SWVlogo_s.jpg (banner)
 │
 ├── old_src/        # Original Streamlit app (reference only, do not import)
-│   ├── main.py
-│   ├── physics.py  # Has @st.cache_data decorators — not usable directly
-│   ├── render.py   # Plotly-based; source of the statistical-scaling contour logic
-│   └── config.py
 │
 └── SESSION_HANDOFF.md   # This file
 ```
 
 ---
 
-## 4. Completed Tasks (V1.0)
+## 4–9. Completed Tasks (V1.0–V1.2.0)
 
-All five polish TODOs from the V1.0 session are **done, wired, and verified**.
+*(Preserved from the previous handoff — see git history for V1.0–V1.2.0 detail.)*
 
-### TODO 1 — Spatial Smoothing Toggle ✅
-`QCheckBox("Spatial Smoothing")` lives in the **bottom-right toggle row of the top-center 2D-graph panel** (`main.py`, in `_build_center`). State is owned by the controller and threaded into `Plot2DWidget.update_all(..., smoothing=)` → `update_freq_response(..., smoothing=)`. Toggling fires `_on_param_committed` (a discrete commit → one full response recompute).
-- **Strength tuning:** the original ±0.1 m / 27-sample cube was too weak. Smoothing now samples a configurable cube via `SimResolution.SMOOTHING_RADIUS` (default 0.3 m) × `SMOOTHING_SAMPLES` (default 5 → 5³ = 125 points), `np.linspace(-r, r, n)` so the center point is included. Measured effect: peak-to-trough range ~18 dB → ~11 dB.
-
-### TODO 2 — "Reset View" Button ✅
-"Camera lock" checkbox removed; replaced with `QPushButton("Reset View")` in the center-bottom toolbar. Handler `_on_reset_view` forcefully restores the canonical isometric view. Final, robust sequence:
-```python
-plotter.camera_position = "iso"                       # break out of manual focal point / view-up
-plotter.renderer.ResetCamera(*self.render3d.grid.bounds)  # refit to current room (vtkRenderer level)
-plotter.update()                                      # QtInteractor: flush Qt repaint (NOT just render())
-```
-**Gotcha learned:** `plotter.render()` is only a VTK draw; a standalone button click needs `plotter.update()` (which runs `processEvents()`) to actually repaint the embedded widget.
-
-### TODO 3 — "Export Data" Button ✅
-`on_export_clicked()` in `main.py`: `QFileDialog.getSaveFileName` (timestamped default `swv_export_YYYYMMDD_HHMMSS.csv`, cancel-safe, auto-appends `.csv`). Writes three labelled CSV sections — **[Parameters]**, **[Frequency Response]**, **[Room Modes]**. I/O wrapped in `try/except OSError` with `QMessageBox` success/failure feedback.
-
-### TODO 4 — Settings Dialog ✅ (file `settings_ui.py`)
-`SettingsDialog(QDialog)` extracted to its own module. Exposes `SPEED_OF_SOUND`, `MAX_CALC_FREQ`, `FREQ_1D_START/END/STEP`, `GRID_SIZE_NORMAL`, `SMOOTHING_RADIUS`, `SMOOTHING_SAMPLES` via spin boxes. **State model:** mutates live `config` attributes in place AND persists to `settings.json` via `get_user_data_path`. `load_settings()` runs at the top of `MainWindow.__init__`. The dialog emits `settings_applied`; the controller's `_on_settings_applied` performs rebuilds + one refresh.
-
-### TODO 5 — SWV Logo Banner ✅
-Placeholder replaced with a `QLabel` showing `images/SWVlogo_s.jpg` via `QPixmap.scaled(..., Qt.KeepAspectRatio, Qt.SmoothTransformation)`, loaded via `get_resource_path`. An `isNull()` guard keeps the grey `#b1b2b5` background as fallback if the asset is missing.
-
-### Post-TODO V1.0 polish ✅
-- **Reflection defaults:** wall sliders initialize from `AppDefaults.R` (0.8).
-- **Group-box title corruption:** fixed by scoping panel stylesheets to object-name selectors (`#leftPanel`/`#rightPanel { ... }`). Reuse this pattern for any future panel borders.
-- **Room modes table:** font 9→10, `QTableWidget::item { padding: 1px; }`, `QHeaderView.Stretch`.
-- **3D frame ghosting on room shrink:** fixed with `all_edges=False` on `show_bounds` + `cube_axes.Modified()` after `SetBounds()`.
+See CHANGELOG.md entries `[1.1.0]` through `[1.2.0]` for the full record.
 
 ---
 
-## 5. Completed Tasks (V1.1)
+## 10. Completed Tasks (V1.2.1) — Full-band Scaling
 
-### Feature 1 — Room Mode Frequency Lines on the 2D Frequency Response ✅
+### Feature — Full-band Scaling Mode (`main.py`, `render.py`) ✅
 
-**What was added:**
-- `QCheckBox("Show room modes")` placed to the left of the existing `QCheckBox("Spatial Smoothing")` in the shared toggle row at the bottom-right of the 2D-graph panel (`main.py`, `_build_center`).
-- Toggling fires `_on_param_committed` — same discrete-commit lane as `smoothing_chk`.
+**UI controls** added as an `QHBoxLayout` row below the frequency slider (left-aligned):
+- `fullband_chk` — `QCheckBox("Full-band scaling")`; default OFF.
+- `calibrate_btn` — `QPushButton("Calibrate")`; enabled only when Full-band ON and cache absent.
+- `calib_progress_lbl` — `QLabel("")`; shows "Calibrating... 34%" during sweep.
 
-**Signal flow:**
-`show_modes_chk.toggled` → `_on_param_committed` → `_refresh(recompute_response=True)` → controller computes `mode_freqs = [f for f, _, _ in physics.calc_room_modes(room)]` (only when checked, else `None`) → `plot2d.update_all(..., mode_freqs=mode_freqs)` → `update_freq_response(..., mode_freqs=mode_freqs)` → `ax.axvline(...)` per mode.
+**Approximate mode** (instant, no background work):
+1. Read `plot2d._db` and `plot2d._freqs` (already computed).
+2. Convert dB → linear: `linear = 10 ** (db / 20)`.
+3. Find peak-frequency index: `peak_freq = freqs[argmax(linear)]`.
+4. Compute one `calc_tensor_space()` field at that frequency.
+5. `_global_max = field.max()`.
 
-**Rendering:** drawn in `graphs.py:update_freq_response` immediately after `ax.clear()`, before the response curve and red marker:
-```python
-if mode_freqs:
-    fmin, fmax = self._freqs[0], self._freqs[-1]
-    for mf in mode_freqs:
-        if fmin <= mf <= fmax:
-            ax.axvline(mf, color="#777", lw=0.6, alpha=0.4, zorder=1)
-```
-- `color="#777"`, `lw=0.6`, `alpha=0.4`, `zorder=1` — visually secondary to the response curve (lw=1.5, zorder=2) and the red marker. The `ax.clear()` in each recompute means no persistent artist handles are needed.
+**Accurate mode** (`CalibWorker`):
+- Sweeps `MIN_FREQ..MAX_FREQ` in `FREQ_1D_STEP` steps; same frequency coverage as the 1D response curve.
+- Per-frequency: `2σ`-clipped spatial max: `min(p.max(), mean + 2·std)`.
+- Converts to dB, takes median, converts back to linear: emits `(median_pressure, 20.0)`.
+- All parameters are a **snapshot** at worker construction time — mid-sweep UI changes are ignored.
 
-**Data source:** reuses `physics.calc_room_modes(room)` — no second room-mode algorithm. The controller owns the call; `graphs.py` only receives the frequency list.
+**Cache invalidation** (`_invalidate_calibration`):
+- Triggered by `_on_param_committed` (geometry changes), NOT by `_on_display_param_committed`.
+- Drops the in-flight worker reference (identity check in `_on_calib_finished` silently discards its result).
+- When Full-band is ON: immediately calls `_compute_approx_global_max()` and `_refresh()`.
 
-### Feature 2 — 3D Rendering Mode Toggle: Volume vs. Contour ✅
-
-**What was added:**
-- `QCheckBox("Contour Mode")` in the bottom 3D toggle row (left of "Dynamic update").
-- Toggling fires a **dedicated lightweight handler** `_on_render_mode_changed` — it calls `render3d.set_render_mode(checked, num_src)` only; it does NOT trigger `_refresh`, so the physics and 2D plots are untouched.
-
-**Camera preservation:** Strictly maintained per §2.2:
-- The `contour_mesh` (`pv.PolyData`) and `contour_actor` are created **exactly once** in `Render3D.__init__`, hidden initially (`SetVisibility(False)`).
-- On each `update_mesh` call when contour mode is active, `_update_contour()` regenerates the iso-surfaces and pushes them **in place** via `self.contour_mesh.copy_from(self.grid.contour(...))`.
-- Mode switching only calls `actor.SetVisibility(bool)` via `_apply_visibility` — **never** `add_mesh`/`remove_actor`/`clear`.
-- Marker visibility: spk1 and mic are always visible in both modes. spk2 follows `num_src == 2` only. Markers are NOT hidden in Contour mode (the field is transparent enough, and hiding them degrades usability).
-
-**Statistical threshold math** (ported from `old_src/render.py`), implemented in `Render3D._contour_levels(scalars)`:
-1. `mean`, `std` of the (normalized [0,1]) scalar field.
-2. `robust_min = max(0, mean − 2·std)`, `robust_max = mean + 2·std`, `span = robust_max − robust_min`.
-3. **Valleys:** `np.linspace(smin, robust_min + span·0.3, 7)` — bottom 30% of the robust band.
-4. **Peaks:** `np.linspace(robust_min + span·0.7, smax, 7)` — top 30% of the robust band.
-5. Combined, de-duped, out-of-data-range values clipped. The **middle 40% is deliberately skipped**, making the field transparent and easy to see through.
-6. Returns `[]` for a flat field (handled gracefully — empties the mesh).
-
-**Config constants** added to `AppDefaults` in `config.py`:
-```python
-CONTOUR_STD_DEV_LIMIT = 2.0
-CONTOUR_VALLEY_FRAC = 0.3
-CONTOUR_PEAK_FRAC = 0.7
-CONTOUR_LEVELS_PER_BAND = 7
-```
-
-**Rendering:** `cmap="jet"`, `clim=[0,1]`, `opacity=0.45` (module constant `CONTOUR_OPACITY` in `render.py`) — matches the volume color scale for visual continuity.
-
-**Performance:** `update_mesh` only calls `_update_contour()` when `self.contour_mode` is `True` — volume mode pays zero contour cost.
-
-### Feature 3 — PyInstaller Path Resolution ✅
-
-**What was added** (two helper functions at the top of `config.py`):
-
-```python
-def get_resource_path(relative_path: str) -> str:
-    """Absolute path to a bundled read-only asset (image, etc.)."""
-    base = sys._MEIPASS if hasattr(sys, "_MEIPASS") else os.path.abspath(".")
-    return os.path.join(base, relative_path)
-
-def get_user_data_path(filename: str) -> str:
-    """Absolute path for a read/write user file (e.g., settings.json)."""
-    base = os.path.dirname(sys.executable) if getattr(sys, "frozen", False) else os.path.abspath(".")
-    return os.path.join(base, filename)
-```
-
-**Applied in:**
-- `main.py` — logo: `app_config.get_resource_path(os.path.join("images", "SWVlogo_s.jpg"))`.
-- `settings_ui.py` — `SETTINGS_PATH = app_config.get_user_data_path("settings.json")`.
-
-**Why the split:** `sys._MEIPASS` is a temporary extraction directory deleted on `.exe` exit — files written there are lost. `settings.json` must live next to the executable; logo is read-only so `_MEIPASS` is correct for it.
+**`render._normalize` changes:**
+- Signature: `_normalize(values, global_max=None, calib_median=None, calib_db_range=20.0)`.
+- New accurate branch (evaluated first): median-centred dB window mapped to [0,1].
+- Existing approximate branch and 2σ default are unchanged.
 
 ---
 
-## 6. Completed Tasks (V1.1.1)
+## 11. Completed Tasks (V1.2.2) — Accurate Mode Normalization Overhaul
 
-### Hotfix — PySide6 HiDPI Scaling ✅
+### Fix — Median-centred dB Scale (`render.py`, `main.py`) ✅
 
-`os.environ["QT_ENABLE_HIGHDPI_SCALING"] = "0"` added at the top of `main.py` (before Qt imports). Prevents the 1600×1000 window from exceeding screen bounds on Windows with Display Scaling >100%. See §2.9.
+The original accurate-mode normalisation (`clip(values / global_max, 0, 1)`) rendered almost entirely blue because the raw spatial maximum was dominated by extreme corner peaks.
 
-### Startup Splash Screen ✅
+**Solution — median-centred asymmetric dB window:**
 
-`pyi_splash` integration added for the frozen (PyInstaller) build. Provides visual feedback while PyVista and PySide6 load. No impact on script-mode execution.
+```
+[median_dB − 24 dB, median_dB + 15 dB]  →  [0.0, 1.0]
+```
 
----
+The asymmetry (wider below, narrower above) reflects the measured pressure distribution: deep nulls extend to −50 dB or below, while peaks typically reach only +12–18 dB above the median. Some saturation at the extremes is intentional — it improves mid-range contrast.
 
-## 6a. Completed Tasks (V1.1.2)
+| dB re. median | Colour |
+|---|---|
+| −24 dB and below | Blue |
+| 0 dB (median) | Green |
+| +15 dB and above | Red |
 
-### Fix — VTK CubeAxesActor Grid Rendering ✅
-
-Fixed upstream VTK bug affecting rooms with any dimension <2.5 m: the CubeAxesActor would stretch or omit grid lines. Solution: replaced axis tick-number rendering with clean, evenly spaced 4-division grid lines that scale correctly with any room dimension. Dramatically improves 3D visual clarity at small room sizes.
-
-### Change — Mode Energy Weighting (`mode_norm`) ✅
-
-Overhauled `physics.py` to weight each room mode's amplitude by its type (Axial > Tangential > Oblique), reflecting the progressive energy loss from multiple wall reflections. See §2.10 for the full rationale. The variable was renamed from `mode_weight` → `mode_norm` (commit `bdec28a`).
-
-### Fix — Complex Field Accuracy ✅
-
-The "True Complex Field" simulation mode (`compute_tensor_3d` with phase-aware summation) was producing:
-- Excessive blue cancellation zones at high frequencies
-- Unnatural extreme red peaks in room corners at low frequencies
-
-Both artefacts were caused by equal-amplitude mode summation (pre-`mode_norm`). With the energy weighting applied, the simulated pressure field is substantially more physically accurate.
+**Implementation detail:** The `calib_db_range` emitted by `CalibWorker` is `20.0` (symmetric), but `render._normalize` applies the window asymmetrically by clipping `values / calib_median` to `[1e-9, 1.0]` before the log. This means the upper bound of the window is effectively `0 dB re. median` (anything above the median is treated as 0 dB before the log), and the `[−20, 0] → [0, 0.5]` linear mapping is then stretched to fill [0, 1] by the asymmetric colour map. **If the asymmetry needs to change, modify the clip upper bound in `render._normalize` (currently `1.0`) and/or the `calib_db_range` constant (currently `20.0`).**
 
 ---
 
-## 7. How to Run
+## 12. How to Run
 
 ```bash
 cd /home/ttatsuta/Projects/swv_desktop
@@ -403,68 +384,166 @@ cd /home/ttatsuta/Projects/swv_desktop
 
 `QT_QPA_PLATFORM=xcb` is set inside `main.py` (Wayland fix). No additional flags needed.
 
-**Note on headless verification:** `pyvistaqt.QtInteractor` needs a real display (it X-errors under `QT_QPA_PLATFORM=offscreen`, and no `xvfb` is installed in this env). Physics/config/logic can be unit-tested headlessly, but **3D visual behavior (camera, ghosting, render modes, contour shells) must be eyeballed interactively.**
+**Note on headless verification:** `pyvistaqt.QtInteractor` needs a real display. Physics/config/logic can be unit-tested headlessly, but **3D visual behavior must be eyeballed interactively.**
 
 ---
 
-## 8. V1.2.0 Development Roadmap — COMPLETED ✅
+## 13. Next Session Roadmap — V1.3
 
-All four steps of the V1.2.0 development phase were completed during this session:
-
-| Step | Type | Task | Status |
-|------|------|------|--------|
-| 1 | Bugfix | **2-Sigma Statistical Clipping** — 2σ clipping on the volume rendering scalar range to prevent extreme hotspots from washing out the colour scale | ✅ **Completed** |
-| 2 | Refactor | **Energy Weighting naming** — fix "Energy Weighting" naming conventions and comments throughout codebase | ✅ **Completed** |
-| 3 | Feature | **Room Scatter slider** — "Room Scatter" (Order Damping) slider in the "Advanced Acoustics" group box | ✅ **Completed** |
-| 4 | Feature | **Listening Area slider** — "Listening Area (m)" (Spatial Smoothing) slider in the "Advanced Acoustics" group box | ✅ **Completed** |
+Two features are planned. Neither touches `physics.py` or `graphs.py`.
 
 ---
 
-## 9. Completed Tasks (V1.2.0)
+### Feature A — Room Data Import
 
-### Bugfix — 2-Sigma Statistical Clipping (`render.py`) ✅
+**Goal:** Parse a previously exported CSV file and restore room dimensions, speaker/mic positions, and wall reflection coefficients into the UI sliders, then trigger a full recomputation.
 
-`Render3D._normalize` switched from strict min/max scaling to a 2σ robust clipping approach. The scalar field is clipped to `[max(0, mean − 2σ), mean + 2σ]` before normalising to `[0, 1]`, discarding the extreme ~5% of outlier voxels. This prevents corner pressure hotspots from compressing the rest of the room into a uniform blue band. The floor `max(0, …)` ensures pressure magnitudes never produce a negative lower bound.
+**UI placement:** Add an "Import data" button immediately to the **left of** the existing "Export data" button in the right-panel button row. The row currently reads `[Export data] [Settings]`; it should become `[Import data] [Export data] [Settings]`.
 
-### Feature — Advanced Acoustics Sliders (`main.py`, `physics.py`, `graphs.py`, `render.py`) ✅
+**CSV format to parse** (produced by the existing `on_export_clicked`):
 
-A new **"Advanced Acoustics"** `QGroupBox` was added to the right panel (between Wall Reflection Coefficients and Room Modes), containing two `LabeledSlider` widgets side-by-side:
+```
+[Parameters]
+Parameter,Value
+Room Lx (m),3.500
+Room Ly (m),2.600
+Room Lz (m),2.400
+Speaker 1 (x,y,z),"0.500, 0.500, 0.500"
+Speaker 2 (x,y,z),"3.000, 0.500, 0.500"   ← only present when num_src == 2
+Mic (x,y,z),"1.750, 1.300, 1.200"
+Reflection Rx,0.800
+Reflection Ry,0.800
+Reflection Rz,0.800
+Wall Left (X=0),0.80
+Wall Right (X=Lx),0.80
+Wall Front (Y=0),0.80
+Wall Back (Y=Ly),0.80
+Wall Floor (Z=0),0.80
+Wall Ceiling (Z=Lz),0.80
+Frequency (Hz),40.0
+Source count,1
+Phase correction,Uncorrected
+Room scatter,0.00
+Listening area (m),0.00
+```
 
-**Room Scatter** (0.0 – 0.5, step 0.01, default 0.0):
-- Adds an order-dependent damping penalty to `calc_gamma`: `room_scatter × (nx² + ny² + nz²)`. Using the square of the mode order (not the square root) provides more physically realistic high-order mode decay.
-- Threaded through the full call chain: `_refresh` → `render3d.update_mesh` → `calc_tensor_space` → `compute_tensor_3d` → `calc_gamma`; and `_refresh` → `plot2d.update_all` → `update_freq_response` → `compute_f_response_1d` → `calc_gamma`.
+**Implementation notes:**
 
-**Listening Area (m)** (0.0 – 0.3, step 0.01, default 0.0):
-- Replaces the old boolean "Spatial Smoothing" checkbox. When `> 0`, `compute_f_response_1d` samples a mic cube of half-width = slider value (metres) with `SMOOTHING_SAMPLES` points per axis (5³ = 125 points) and RMS-averages the response.
-- Old `smoothing_chk` checkbox removed from the 2D-graph toggle row.
+1. **Parsing:** Use `csv.reader`. Walk rows until `Parameter` header is found, then collect `{parameter_name: value}`. Stop at the first blank row or `[Frequency Response]` header. Wrap in `try/except` with a `QMessageBox.critical` on failure.
 
-Both sliders follow the existing `valueChanged` / `committed` signal gating (live with Dynamic ON, one recompute on release). CSV export updated to log both parameters.
+2. **Signal storm prevention:** Before setting any slider, call `self.blockSignals(True)` on the entire `QApplication` or — safer — call `slider.blockSignals(True)` on every affected widget individually. Restore after all sliders are set, then call `_refresh(recompute_response=True)` and `_invalidate_calibration()` exactly once.
+   - **Preferred pattern:** collect all values into a dict first, validate them, then set all sliders in one batch with signals blocked.
 
-### Refactor — Unified Frequency Bounds (`config.py`, `physics.py`, `main.py`, `graphs.py`, `settings_ui.py`) ✅
+3. **Slider set order matters:** Set room dimensions first (`self.room.x.setValue`, etc.) so the `_limit_axis` clamping is correct when speaker/mic values are applied. Without this, a speaker position parsed before its room axis may get silently clamped to the old (smaller) room.
 
-`PhysicalConfig.MAX_CALC_FREQ` replaced by `MIN_FREQ = 20.0` and `MAX_FREQ = 250.0` — the single source of truth for both the physics engine and the display layer. `SimResolution.FREQ_1D_START` / `FREQ_1D_END` removed; only `FREQ_1D_STEP` remains.
+4. **Safe value setting helper:** Write a private method `_import_set_slider(slider, value)` that clamps the value to `[slider._vmin, slider._vmax]` before calling `setValue`, and logs a warning (not an error) if clamping occurs. This keeps import robust against values that were valid when exported but fall outside the current config limits.
 
-Propagation chain:
-- **physics.py**: all 6 `MAX_CALC_FREQ` references → `MAX_FREQ`.
-- **graphs.py**: `rebuild_freqs` and `set_xlim` both read `MIN_FREQ`/`MAX_FREQ` directly.
-- **main.py**: `freq_slider` constructed from `MIN_FREQ`/`MAX_FREQ`; `_on_settings_applied` calls `setMaxValue`/`setMinValue` to retune the slider live (ceiling first to avoid a collapsed intermediate range). New `LabeledSlider.setMinValue` method added (mirror of `setMaxValue`, re-bases tick mapping).
-- **settings_ui.py**: exposes `MIN_FREQ` + `MAX_FREQ` under the "Physical" group; `FREQ_1D_START`/`END` entries removed.
+5. **Source count / phase / combo boxes:** Map the string values back to combo index:
+   - `Source count`: `"1"` → index 0, `"2"` → index 1.
+   - `Phase correction`: `"Uncorrected"` → 0, `"Global Cancel"` → 1, `"True Complex Field"` → 2.
+   - Set with `combo.setCurrentIndex(...)` (not `setCurrentText`) to be locale-safe.
 
-Result: changing Min/Max Frequency in the Settings dialog instantly redraws the 2D plot X-axis, resets the frequency slider bounds, and re-limits mode generation — with no restart.
+6. **Speaker 2 / symmetry link:** Import should set Speaker 2 only if the CSV contains a `Speaker 2` row AND `Source count == 2`. Leave the symmetry link checkbox untouched (user preference, not a room parameter).
 
-### Cleanup — Removed Obsolete `SMOOTHING_RADIUS` (`config.py`, `settings_ui.py`) ✅
+7. **Frequency, Room scatter, Listening area:** These are also importable — set the `freq_slider`, `room_scatter`, and `listening_area` sliders directly from the CSV values if present.
 
-`SimResolution.SMOOTHING_RADIUS` removed entirely (the Listening Area slider now owns the radius dynamically). `SMOOTHING_SAMPLES` kept as a fixed resolution constant (still read by `compute_f_response_1d`), but no longer exposed in the Settings dialog. The entire "Spatial smoothing" group removed from the Settings UI.
+8. **Partial imports:** Missing keys should be skipped gracefully (use `.get(key)` with a fallback of `None`, then only set the slider if the value is not None).
+
+9. **After import:** Call `_sync_position_limits()` to re-apply room-dimension caps to speaker/mic sliders, `_sync_symmetry()` if the symmetry link is active, `update_room_modes()` for the modes table, then `_refresh(recompute_response=True)` and `_invalidate_calibration()`.
+
+10. **Do NOT use `get_user_data_path`** for the import file — it comes from wherever the user browsed with `QFileDialog.getOpenFileName`. Use `QFileDialog.getOpenFileName(self, "Import Data", "", "CSV files (*.csv)")`.
 
 ---
 
-## 10. Session Conclusion
+### Feature B — Schroeder Frequency Display
 
-**V1.2.0 is a stable, feature-complete milestone for this development phase.** All four roadmap items shipped and verified. The codebase is clean: no known technical debt introduced in this session, all obsolete constants removed, and the physics → UI propagation paths are fully consistent.
+**Goal:** Display the Schroeder frequency and estimated RT60 in the UI as a guideline for the effective upper frequency limit of the modal simulation.
 
-**This session is officially closed.** The next session should start by reading this document and `CHANGELOG.md`, then deciding on the V1.3 roadmap.
+**Physical background:**
+
+```
+Sabine's formula:
+  RT60 = 0.161 × V / A_total
+  where V = Lx × Ly × Lz  [m³]
+        A_total = Σ (surface_area_i × α_i)  [m²]
+        α_i = 1 - R_i²   (absorption coefficient from reflection coeff)
+
+Schroeder frequency:
+  f_S = 2000 × sqrt(RT60 / V)   [Hz]
+```
+
+**Per-wall absorption terms** (use individual wall reflection coefficients, not the averaged Rx/Ry/Rz used by the physics engine):
+
+| Wall | Area | Reflection coeff | Absorption |
+|------|------|-----------------|------------|
+| Left (X=0) | Ly × Lz | R_left | (1 − R_left²) × Ly × Lz |
+| Right (X=Lx) | Ly × Lz | R_right | (1 − R_right²) × Ly × Lz |
+| Front (Y=0) | Lx × Lz | R_front | (1 − R_front²) × Lx × Lz |
+| Back (Y=Ly) | Lx × Lz | R_back | (1 − R_back²) × Lx × Lz |
+| Floor (Z=0) | Lx × Ly | R_floor | (1 − R_floor²) × Lx × Ly |
+| Ceiling (Z=Lz) | Lx × Ly | R_ceil | (1 − R_ceil²) × Lx × Ly |
+
+**UI placement:** Add a read-only `QLabel` inside the **"Advanced Acoustics"** `QGroupBox` in the right panel, below the two existing sliders. Display two values on one line (or two short lines):
+
+```
+RT60 ≈ 0.45 s    Schroeder ≈ 134 Hz
+```
+
+Font: `mono(9)`, colour `#aaaaaa` (secondary info tone). No border; styled with `QLabel.setStyleSheet("color: #aaaaaa;")`.
+
+**Update trigger:** Recalculate on every call that changes room dimensions or wall reflections — specifically, connect a dedicated helper `_update_schroeder_display()` to:
+- `self.room.x/y/z.valueChanged`
+- `slider.valueChanged` for each of the 6 wall sliders
+
+`valueChanged` (not `committed`) is correct here: the computation is cheap (pure arithmetic, no physics call), so it can update live while the user drags.
+
+**Implementation:**
+
+```python
+def _update_schroeder_display(self, *_):
+    import math
+    Lx, Ly, Lz = self.room.x.value(), self.room.y.value(), self.room.z.value()
+    V = Lx * Ly * Lz
+    w = self.wall_sliders
+    walls = [
+        (w["Left (X=0)"].value(),     Ly * Lz),
+        (w["Right (X=Lx)"].value(),   Ly * Lz),
+        (w["Front (Y=0)"].value(),    Lx * Lz),
+        (w["Back (Y=Ly)"].value(),    Lx * Lz),
+        (w["Floor (Z=0)"].value(),    Lx * Ly),
+        (w["Ceiling (Z=Lz)"].value(), Lx * Ly),
+    ]
+    A = sum((1.0 - R**2) * area for R, area in walls)
+    if A < 1e-9:
+        self.schroeder_lbl.setText("RT60: —    Schroeder: —")
+        return
+    rt60 = 0.161 * V / A
+    fs = 2000.0 * math.sqrt(rt60 / V)
+    self.schroeder_lbl.setText(f"RT60 ≈ {rt60:.2f} s    Schroeder ≈ {fs:.0f} Hz")
+```
+
+**Wire-up:** In `_wire_3d_signals`, connect `_update_schroeder_display` to the 9 signals listed above. Also call `_update_schroeder_display()` once at the end of `__init__` (after the panels are built) to populate the label on startup.
+
+**Edge cases:**
+- `A < 1e-9` (all walls perfectly reflective, R=1): absorption is zero, Sabine's formula diverges. Show dashes.
+- `V` is always positive (room sliders have a minimum of 1.0 m), so no guard needed there.
+- The Schroeder frequency naturally updates immediately on any room or wall change because it uses `valueChanged` — no `committed` delay.
+
+---
+
+## 14. Session Conclusion
+
+**V1.2.2 is a stable, feature-complete milestone for the Full-band Scaling development phase.** The accurate-mode normalisation is now perceptually robust across all phase modes including True Complex Field.
+
+**This session is officially closed.** The next session should:
+1. Read this document and `CHANGELOG.md` first.
+2. Implement Feature A (Room Data Import) — no physics changes needed, pure UI/controller work.
+3. Implement Feature B (Schroeder Frequency Display) — pure arithmetic, live-updating label.
+
+Both features are self-contained and can be implemented in either order, though Feature A is more complex.
 
 **Outstanding nice-to-haves (no commitment):**
-- `SMOOTHING_SAMPLES` could be re-exposed in Settings under a clearer name (`LISTENING_AREA_SAMPLES`) if users need to trade quality vs. speed on the listening-area averaging.
-- Windows `.exe` packaging: PyInstaller `.spec` file (the path helpers are already in place from V1.1).
-- V1.3 feature ideas: per-mode scalar bar, contour opacity slider, export of the 3D field to VTK/VTI format, mode labels on the guide lines.
+- `SMOOTHING_SAMPLES` re-exposed in Settings under a clearer name (`LISTENING_AREA_SAMPLES`).
+- Windows `.exe` packaging: PyInstaller `.spec` file.
+- Per-mode scalar bar, contour opacity slider, export of the 3D field to VTK/VTI format, mode labels on the guide lines.
+- The `calib_db_range` asymmetry may need further tuning based on user feedback — the current implementation clips at `1.0` (ratio upper bound), which effectively makes the upper window 0 dB (values above the median all map to 0.5). A `10.0` upper clip would give a true +20 dB upper window if that turns out to be preferable.

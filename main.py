@@ -922,6 +922,225 @@ class MainWindow(QMainWindow):
         QMessageBox.information(self, "Export complete", f"Data exported to:\n{path}")
 
     # ------------------------------------------------------------------
+    # CONTROLLER: data import
+    # ------------------------------------------------------------------
+    # Wall parameter names, in the order the export writes them. The CSV keys
+    # are these names prefixed with "Wall ".
+    _IMPORT_WALL_NAMES = (
+        "Left (X=0)", "Right (X=Lx)",
+        "Front (Y=0)", "Back (Y=Ly)",
+        "Floor (Z=0)", "Ceiling (Z=Lz)",
+    )
+
+    def on_import_clicked(self):
+        """Restore all room/simulation parameters from a previously exported CSV.
+
+        Reads the ``[Parameters]`` section (ignoring ``[Frequency Response]`` and
+        ``[Room Modes]``), validates that every required value is present and
+        well-formed, then applies them to the UI in one batch with a single
+        recompute. If anything is missing or malformed the import is aborted
+        before any state is touched and an error dialog is shown -- no partial
+        state is ever applied.
+        """
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Import Data", "", "CSV files (*.csv)"
+        )
+        if not path:
+            # User cancelled the dialog -> nothing to do.
+            return
+
+        try:
+            raw = self._read_parameters_section(path)
+            values = self._parse_imported_params(raw)
+        except (OSError, ValueError, KeyError) as exc:
+            QMessageBox.critical(
+                self, "Import failed",
+                f"Could not import parameters from:\n{path}\n\n{exc}",
+            )
+            return
+
+        # Parsing succeeded and every required value is valid -> safe to apply.
+        self._apply_imported_params(values)
+        QMessageBox.information(
+            self, "Import complete", f"Parameters imported from:\n{path}"
+        )
+
+    def _read_parameters_section(self, path):
+        """Return ``{parameter_name: raw_value_string}`` for the ``[Parameters]``
+        section only. Stops at the first blank row or next ``[Section]`` header
+        once inside the section. Raises ``ValueError`` if the section or its
+        header row is missing/malformed."""
+        params = {}
+        in_section = False
+        header_seen = False
+        with open(path, newline="", encoding="utf-8") as fh:
+            for row in csv.reader(fh):
+                if not in_section:
+                    if row and row[0].strip() == "[Parameters]":
+                        in_section = True
+                    continue
+                # Inside the [Parameters] section.
+                if not row or not row[0].strip():
+                    break  # blank row ends the section
+                key = row[0].strip()
+                if key.startswith("[") and key.endswith("]"):
+                    break  # next section header
+                if not header_seen:
+                    if key == "Parameter":
+                        header_seen = True
+                    continue
+                if len(row) >= 2:
+                    params[key] = row[1].strip()
+
+        if not in_section:
+            raise ValueError("No [Parameters] section found in the file.")
+        if not header_seen:
+            raise ValueError("Malformed [Parameters] section (missing header row).")
+        return params
+
+    def _parse_imported_params(self, p):
+        """Validate and type-convert the raw parameter strings into a dict ready
+        for ``_apply_imported_params``. Raises ``KeyError`` for a missing key and
+        ``ValueError`` for a malformed value -- the caller treats either as a
+        clean abort.
+
+        Speaker 2 is required only when ``Source count == 2`` (the export omits
+        it for a single source)."""
+        def req(key):
+            if key not in p:
+                raise KeyError(f"Missing parameter: {key}")
+            return p[key]
+
+        def as_float(key):
+            try:
+                return float(req(key))
+            except ValueError:
+                raise ValueError(f"Invalid number for {key!r}: {p[key]!r}")
+
+        def as_xyz(key):
+            parts = req(key).split(",")
+            if len(parts) != 3:
+                raise ValueError(f"Invalid position for {key!r}: {p[key]!r}")
+            try:
+                return tuple(float(part) for part in parts)
+            except ValueError:
+                raise ValueError(f"Invalid position for {key!r}: {p[key]!r}")
+
+        out = {
+            "Lx": as_float("Room Lx (m)"),
+            "Ly": as_float("Room Ly (m)"),
+            "Lz": as_float("Room Lz (m)"),
+            "spk1": as_xyz("Speaker 1 (x,y,z)"),
+            "mic": as_xyz("Mic (x,y,z)"),
+            "walls": {
+                name: as_float(f"Wall {name}") for name in self._IMPORT_WALL_NAMES
+            },
+            "freq": as_float("Frequency (Hz)"),
+            "room_scatter": as_float("Room scatter"),
+            "listening_area": as_float("Listening area (m)"),
+            "phase_index": self._phase_label_to_index(req("Phase correction")),
+        }
+
+        sc = req("Source count").strip()
+        if sc not in ("1", "2"):
+            raise ValueError(f"Invalid source count: {sc!r}")
+        out["num_src"] = int(sc)
+        if out["num_src"] == 2:
+            out["spk2"] = as_xyz("Speaker 2 (x,y,z)")
+        return out
+
+    @staticmethod
+    def _phase_label_to_index(label):
+        """Map an exported phase-correction label back to the combo index.
+
+        Matched case-insensitively by substring so it is robust to label-text
+        changes ("Uncorrected"/"Uncorrelated", "Global cancel"/"Global Cancel",
+        "True complex field"/"True Complex Field")."""
+        low = label.lower()
+        if "complex" in low:
+            return 2
+        if "cancel" in low:
+            return 1
+        if "uncorre" in low:
+            return 0
+        raise ValueError(f"Unknown phase correction: {label!r}")
+
+    def _import_set_slider(self, slider, value):
+        """Set a LabeledSlider value, clamping to its current ``[_vmin, _vmax]``
+        range first. A value that was valid when exported may fall outside the
+        current config limits -- that is a warning, not a failure."""
+        clamped = max(slider._vmin, min(slider._vmax, value))
+        if clamped != value:
+            print(
+                f"[import] value {value} out of range "
+                f"[{slider._vmin}, {slider._vmax}] -> clamped to {clamped}"
+            )
+        slider.setValue(clamped)
+
+    def _apply_imported_params(self, v):
+        """Apply validated parameters to the UI in one batch, then recompute once.
+
+        All affected widget signals are blocked while values are set so no
+        per-parameter recompute / symmetry / clamp cascade fires. Room dimensions
+        are applied first (and position-slider maxima re-synced) so speaker/mic
+        values are clamped against the imported room, not the previous one. After
+        the batch, derived state is rebuilt and a single refresh + calibration
+        invalidation is triggered."""
+        sliders = [
+            self.room.x, self.room.y, self.room.z,
+            self.spk1.x, self.spk1.y, self.spk1.z,
+            self.spk2.x, self.spk2.y, self.spk2.z,
+            self.mic.x, self.mic.y, self.mic.z,
+            self.freq_slider, self.room_scatter, self.listening_area,
+        ] + list(self.wall_sliders.values())
+        combos = [self.source_combo, self.phase_combo]
+
+        for w in sliders + combos:
+            w.blockSignals(True)
+        try:
+            # Room dimensions FIRST, then re-cap position sliders so the
+            # speaker/mic values below clamp against the imported room.
+            self._import_set_slider(self.room.x, v["Lx"])
+            self._import_set_slider(self.room.y, v["Ly"])
+            self._import_set_slider(self.room.z, v["Lz"])
+            self._sync_position_limits()
+
+            self._import_set_slider(self.spk1.x, v["spk1"][0])
+            self._import_set_slider(self.spk1.y, v["spk1"][1])
+            self._import_set_slider(self.spk1.z, v["spk1"][2])
+
+            self._import_set_slider(self.mic.x, v["mic"][0])
+            self._import_set_slider(self.mic.y, v["mic"][1])
+            self._import_set_slider(self.mic.z, v["mic"][2])
+
+            for name, slider in self.wall_sliders.items():
+                self._import_set_slider(slider, v["walls"][name])
+
+            self._import_set_slider(self.freq_slider, v["freq"])
+            self._import_set_slider(self.room_scatter, v["room_scatter"])
+            self._import_set_slider(self.listening_area, v["listening_area"])
+
+            self.source_combo.setCurrentIndex(0 if v["num_src"] == 1 else 1)
+            self.phase_combo.setCurrentIndex(v["phase_index"])
+
+            if v["num_src"] == 2 and "spk2" in v:
+                self._import_set_slider(self.spk2.x, v["spk2"][0])
+                self._import_set_slider(self.spk2.y, v["spk2"][1])
+                self._import_set_slider(self.spk2.z, v["spk2"][2])
+        finally:
+            for w in sliders + combos:
+                w.blockSignals(False)
+
+        # Rebuild derived state the blocked signals would normally maintain,
+        # then recompute the 3D field + 2D plots exactly once.
+        self._update_source_state()
+        self._sync_position_limits()
+        self._sync_symmetry()
+        self.update_room_modes()
+        self._refresh(recompute_response=True)
+        self._invalidate_calibration()
+
+    # ------------------------------------------------------------------
     # CONTROLLER: settings dialog
     # ------------------------------------------------------------------
     def _open_settings(self):
@@ -995,6 +1214,9 @@ class MainWindow(QMainWindow):
 
         # Export current state to CSV.
         self.export_btn.clicked.connect(self.on_export_clicked)
+
+        # Import room parameters from a previously exported CSV.
+        self.import_btn.clicked.connect(self.on_import_clicked)
 
         # Open the runtime settings dialog.
         self.settings_btn.clicked.connect(self._open_settings)
@@ -1178,12 +1400,16 @@ class MainWindow(QMainWindow):
         lay.addWidget(modes_box, stretch=1)
 
         # --- Buttons -------------------------------------------------
+        # Three buttons in one row: [Export data] [Import data] [Settings].
+        # Export and Settings are slightly smaller than before to leave room
+        # for the new Import button while keeping all three the same size.
         btn_row = QHBoxLayout()
         self.export_btn = QPushButton("Export data")
+        self.import_btn = QPushButton("Import data")
         self.settings_btn = QPushButton("Settings")
-        for btn in (self.export_btn, self.settings_btn):
-            btn.setFont(mono(10, bold=True))
-            btn.setFixedHeight(40)
+        for btn in (self.export_btn, self.import_btn, self.settings_btn):
+            btn.setFont(mono(9, bold=True))
+            btn.setFixedHeight(34)
             btn_row.addWidget(btn)
         lay.addLayout(btn_row)
 
