@@ -17,16 +17,14 @@ clears/re-adds actors, so the camera is preserved. The speaker/mic markers stay
 visible in both modes.
 
 Supporting actors:
-  * X-ray markers  - speaker/mic spheres live in a top-layer overlay renderer so
-                     they always draw *over* the volume, even when buried inside
-                     a dense pressure field.
+  * Equipment markers - speaker/mic spheres added to the scene with opaque
+                        shading so they read clearly against the volume.
   * Floor grid     - a checkerboard plane at Z=0 (resizes with the room).
   * Cube axes      - show_bounds() frames the space; bounds update with the room.
 """
 
 import numpy as np
 import pyvista as pv
-import vtk
 from pyvistaqt import QtInteractor
 
 import config as app_config
@@ -148,8 +146,7 @@ class Render3D:
         self.outline = self.grid.outline()
         self.plotter.add_mesh(self.outline, color=OUTLINE_COLOR, line_width=2)
 
-        # ---- Equipment markers (created in main renderer, then moved to an
-        #      overlay so they render on top of the volume) ---------------
+        # ---- Equipment markers -----------------------------------------
         self._marker_r = 0.15
         self.spk1_marker = self._sphere(D.SPK_X, D.SPK_Y, D.SPK_Z)
         self.spk2_marker = self._sphere(D.SPK2_X, D.SPK2_Y, D.SPK2_Z)
@@ -170,8 +167,6 @@ class Render3D:
 
         self.plotter.add_axes()
 
-        # X-ray overlay must be set up after the marker actors exist.
-        # self._setup_overlay()
         self.plotter.reset_camera()
 
     # -- construction helpers -------------------------------------------
@@ -213,34 +208,6 @@ class Render3D:
             specular=0.3, ambient=0.45, diffuse=0.7,
         )
         return actor
-
-    def _setup_overlay(self):
-        """Move the equipment markers into a layer-1 renderer that shares the
-        main camera. A higher layer composites on top of the volume, so the
-        markers stay visible even when fully inside a dense field (X-ray)."""
-        render_window = getattr(self.plotter, "render_window", None) or self.plotter.ren_win
-        main = self.plotter.renderer
-
-        # Pick a layer strictly above every existing renderer. PyVista's
-        # orientation-axes widget (add_axes) already sits on layer 1, so reusing
-        # that layer lets it overdraw our markers; a dedicated top layer doesn't.
-        existing = render_window.GetRenderers()
-        existing.InitTraversal()
-        max_layer = 0
-        for _ in range(existing.GetNumberOfItems()):
-            max_layer = max(max_layer, existing.GetNextItem().GetLayer())
-        top_layer = max_layer + 1
-
-        self._overlay = vtk.vtkRenderer()
-        self._overlay.SetLayer(top_layer)
-        self._overlay.InteractiveOff()
-        self._overlay.SetActiveCamera(main.GetActiveCamera())   # share camera
-        render_window.SetNumberOfLayers(top_layer + 1)
-        render_window.AddRenderer(self._overlay)
-
-        for actor in (self.spk1_actor, self.spk2_actor, self.mic_actor):
-            main.RemoveActor(actor)
-            self._overlay.AddActor(actor)
 
     def _tune_opacity_distance(self, room):
         """Set the scalar-opacity unit distance to roughly one cell so opacity
