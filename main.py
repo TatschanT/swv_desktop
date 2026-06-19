@@ -6,7 +6,6 @@ if platform.system() == "Linux":
 # Hotfix to prevent window scaling
 os.environ["QT_ENABLE_HIGHDPI_SCALING"] = "0"
 
-import csv
 import sys
 from collections import namedtuple
 from datetime import datetime
@@ -35,6 +34,7 @@ from PySide6.QtWidgets import (
 
 # Model layer (streamlit-free desktop port)
 import config as app_config
+import csv_io
 import physics
 
 # View layer (3D + 2D)
@@ -675,56 +675,20 @@ class MainWindow(QMainWindow):
         if not path.lower().endswith(".csv"):
             path += ".csv"
 
-        # Gather current state.
+        # Gather current state. The CSV layout lives in csv_io.write_export.
         s = self._physics_snapshot()
-        room, spk1, spk2, mic, num_src = s.room, s.spk1, s.spk2, s.mic, s.num_src
-        w = self.wall_sliders
-        modes = physics.calc_room_modes(room)
-
+        walls = {name: self.wall_sliders[name].value() for name in csv_io.WALL_NAMES}
         try:
-            with open(path, "w", newline="", encoding="utf-8") as fh:
-                writer = csv.writer(fh)
-
-                # --- Section 1: parameters -------------------------------
-                writer.writerow(["[Parameters]"])
-                writer.writerow(["Parameter", "Value"])
-                writer.writerow(["Room Lx (m)", f"{room.Lx:.3f}"])
-                writer.writerow(["Room Ly (m)", f"{room.Ly:.3f}"])
-                writer.writerow(["Room Lz (m)", f"{room.Lz:.3f}"])
-                writer.writerow(["Speaker 1 (x,y,z)", f"{spk1.x:.3f}, {spk1.y:.3f}, {spk1.z:.3f}"])
-                if num_src == 2:
-                    writer.writerow(["Speaker 2 (x,y,z)", f"{spk2.x:.3f}, {spk2.y:.3f}, {spk2.z:.3f}"])
-                writer.writerow(["Mic (x,y,z)", f"{mic.x:.3f}, {mic.y:.3f}, {mic.z:.3f}"])
-                writer.writerow(["Reflection Rx", f"{room.Rx:.3f}"])
-                writer.writerow(["Reflection Ry", f"{room.Ry:.3f}"])
-                writer.writerow(["Reflection Rz", f"{room.Rz:.3f}"])
-                writer.writerow(["Wall Left (X=0)", f"{w['Left (X=0)'].value():.2f}"])
-                writer.writerow(["Wall Right (X=Lx)", f"{w['Right (X=Lx)'].value():.2f}"])
-                writer.writerow(["Wall Front (Y=0)", f"{w['Front (Y=0)'].value():.2f}"])
-                writer.writerow(["Wall Back (Y=Ly)", f"{w['Back (Y=Ly)'].value():.2f}"])
-                writer.writerow(["Wall Floor (Z=0)", f"{w['Floor (Z=0)'].value():.2f}"])
-                writer.writerow(["Wall Ceiling (Z=Lz)", f"{w['Ceiling (Z=Lz)'].value():.2f}"])
-                writer.writerow(["Frequency (Hz)", f"{self.freq_slider.value():.1f}"])
-                writer.writerow(["Source count", num_src])
-                writer.writerow(["Phase correction", self._corr_mode()])
-                writer.writerow(["Room scatter", f"{self.room_scatter.value():.2f}"])
-                writer.writerow(["Listening area (m)", f"{self.listening_area.value():.2f}"])
-
-                # --- Section 2: frequency response -----------------------
-                writer.writerow([])
-                writer.writerow(["[Frequency Response]"])
-                writer.writerow(["Frequency (Hz)", "Relative SPL (dB)"])
-                freqs, db = self.plot2d._freqs, self.plot2d._db
-                if db is not None:
-                    for f, d in zip(freqs, db):
-                        writer.writerow([f"{f:.1f}", f"{d:.3f}"])
-
-                # --- Section 3: room modes -------------------------------
-                writer.writerow([])
-                writer.writerow(["[Room Modes]"])
-                writer.writerow(["Frequency (Hz)", "Mode (nx, ny, nz)", "Length (m)"])
-                for freq, (nx, ny, nz), length in modes:
-                    writer.writerow([f"{freq:.1f}", f"({nx}, {ny}, {nz})", f"{length:.3f}"])
+            csv_io.write_export(
+                path,
+                room=s.room, spk1=s.spk1, spk2=s.spk2, mic=s.mic,
+                num_src=s.num_src, walls=walls,
+                freq=self.freq_slider.value(), corr_mode=s.corr,
+                room_scatter=s.room_scatter,
+                listening_area=self.listening_area.value(),
+                response_freqs=self.plot2d._freqs, response_db=self.plot2d._db,
+                modes=physics.calc_room_modes(s.room),
+            )
         except OSError as exc:
             QMessageBox.critical(self, "Export failed", f"Could not write file:\n{exc}")
             return
@@ -734,14 +698,6 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------
     # CONTROLLER: data import
     # ------------------------------------------------------------------
-    # Wall parameter names, in the order the export writes them. The CSV keys
-    # are these names prefixed with "Wall ".
-    _IMPORT_WALL_NAMES = (
-        "Left (X=0)", "Right (X=Lx)",
-        "Front (Y=0)", "Back (Y=Ly)",
-        "Floor (Z=0)", "Ceiling (Z=Lz)",
-    )
-
     def on_import_clicked(self):
         """Restore all room/simulation parameters from a previously exported CSV.
 
@@ -760,8 +716,7 @@ class MainWindow(QMainWindow):
             return
 
         try:
-            raw = self._read_parameters_section(path)
-            values = self._parse_imported_params(raw)
+            values = csv_io.load_parameters(path)
         except (OSError, ValueError, KeyError) as exc:
             QMessageBox.critical(
                 self, "Import failed",
@@ -774,106 +729,6 @@ class MainWindow(QMainWindow):
         QMessageBox.information(
             self, "Import complete", f"Parameters imported from:\n{path}"
         )
-
-    def _read_parameters_section(self, path):
-        """Return ``{parameter_name: raw_value_string}`` for the ``[Parameters]``
-        section only. Stops at the first blank row or next ``[Section]`` header
-        once inside the section. Raises ``ValueError`` if the section or its
-        header row is missing/malformed."""
-        params = {}
-        in_section = False
-        header_seen = False
-        with open(path, newline="", encoding="utf-8") as fh:
-            for row in csv.reader(fh):
-                if not in_section:
-                    if row and row[0].strip() == "[Parameters]":
-                        in_section = True
-                    continue
-                # Inside the [Parameters] section.
-                if not row or not row[0].strip():
-                    break  # blank row ends the section
-                key = row[0].strip()
-                if key.startswith("[") and key.endswith("]"):
-                    break  # next section header
-                if not header_seen:
-                    if key == "Parameter":
-                        header_seen = True
-                    continue
-                if len(row) >= 2:
-                    params[key] = row[1].strip()
-
-        if not in_section:
-            raise ValueError("No [Parameters] section found in the file.")
-        if not header_seen:
-            raise ValueError("Malformed [Parameters] section (missing header row).")
-        return params
-
-    def _parse_imported_params(self, p):
-        """Validate and type-convert the raw parameter strings into a dict ready
-        for ``_apply_imported_params``. Raises ``KeyError`` for a missing key and
-        ``ValueError`` for a malformed value -- the caller treats either as a
-        clean abort.
-
-        Speaker 2 is required only when ``Source count == 2`` (the export omits
-        it for a single source)."""
-        def req(key):
-            if key not in p:
-                raise KeyError(f"Missing parameter: {key}")
-            return p[key]
-
-        def as_float(key):
-            try:
-                return float(req(key))
-            except ValueError:
-                raise ValueError(f"Invalid number for {key!r}: {p[key]!r}")
-
-        def as_xyz(key):
-            parts = req(key).split(",")
-            if len(parts) != 3:
-                raise ValueError(f"Invalid position for {key!r}: {p[key]!r}")
-            try:
-                return tuple(float(part) for part in parts)
-            except ValueError:
-                raise ValueError(f"Invalid position for {key!r}: {p[key]!r}")
-
-        out = {
-            "Lx": as_float("Room Lx (m)"),
-            "Ly": as_float("Room Ly (m)"),
-            "Lz": as_float("Room Lz (m)"),
-            "spk1": as_xyz("Speaker 1 (x,y,z)"),
-            "mic": as_xyz("Mic (x,y,z)"),
-            "walls": {
-                name: as_float(f"Wall {name}") for name in self._IMPORT_WALL_NAMES
-            },
-            "freq": as_float("Frequency (Hz)"),
-            "room_scatter": as_float("Room scatter"),
-            "listening_area": as_float("Listening area (m)"),
-            "phase_index": self._phase_label_to_index(req("Phase correction")),
-        }
-
-        sc = req("Source count").strip()
-        if sc not in ("1", "2"):
-            raise ValueError(f"Invalid source count: {sc!r}")
-        out["num_src"] = int(sc)
-        if out["num_src"] == 2:
-            out["spk2"] = as_xyz("Speaker 2 (x,y,z)")
-        return out
-
-    @staticmethod
-    def _phase_label_to_index(label):
-        """Map an exported phase-correction label back to the combo index.
-
-        Matched case-insensitively by substring so it is robust to label-text
-        changes ("Uncorrected"/"Uncorrelated", "Global cancel"/"Global Cancel",
-        "True complex field"/"True Complex Field")."""
-        low = label.lower()
-        if "complex" in low:
-            return 2
-        if "cancel" in low:
-            return 1
-        if "uncorre" in low:
-            return 0
-        raise ValueError(f"Unknown phase correction: {label!r}")
 
     def _import_set_slider(self, slider, value):
         """Set a LabeledSlider value, clamping to its current ``[_vmin, _vmax]``
