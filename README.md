@@ -21,8 +21,9 @@ To bridge the gap between ideal theoretical physics and real-world perception, u
   - **Room Scatter (Order Damping)**: Real rooms have furniture that scatters high-frequency tangential and oblique modes. This slider applies an $n^2$ penalty to high-order modes, allowing you to dial in the "liveliness" of your specific space.
   - **Listening Area (Spatial Smoothing)**: We don't listen with a mathematically infinitely small point. This slider averages the pressure field over a localized 3D area around the mic, giving you a realistic frequency response that matches actual human perception.
 - **Data Export**: Export your room configurations, frequency response data, and complete room modes directly to a CSV file.
+- **Data Import**: You can import data from a CSV file containing exported sessions.
 - **Live Settings Tuning**: Dynamically adjust simulation resolutions, grid sizes, and the calculation range via the built-in Settings dialog without restarting the application.
-
+- **Approximate Display of Schroeder Frequency**: The Schroeder frequency is the frequency at which the acoustic characteristics of a room transition from a “region dominated by standing waves” to a “statistically uniform diffuse sound field.” Since the behavior of sound waves within a space changes fundamentally at this frequency, we have chosen to display it as a guideline for the upper limit of the simulation’s scope. In large or dead rooms, this frequency decreases.
 ## 🚀 3D View Controls
 - When **Contour mode** is enabled, the sound pressure distribution display switches to contour mode, providing a clearer view (though the amount of information displayed decreases)
 - When you turn on **Dynamic mode toggle**, the sound pressure distribution follows all parameter adjustments (requires power)

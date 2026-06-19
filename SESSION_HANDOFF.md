@@ -1,6 +1,6 @@
 # Standing Wave Viewer — Session Handoff Document
 **Date:** 2026-06-19  
-**Status:** **V1.3.0 STABLE** ✅ — Room Data Import + Schroeder Frequency Display complete. Session closed.  
+**Status:** **V1.3.0 STABLE** ✅ — Room Data Import + Schroeder Frequency Display complete. Structural refactoring complete (5 commits on `refactor/structural-cleanup`). Session closed.  
 **Project:** `swv_desktop` (`/home/ttatsuta/Projects/swv_desktop`)  
 **Venv:** `.venv/` (Python 3.14, PySide6 6.11, PyVista 0.48, pyvistaqt 0.11, Matplotlib 3.10, NumPy 2.4)
 
@@ -61,12 +61,13 @@
 | Accurate mode | `CalibWorker` (QThread) sweeps all frequencies; UI stays interactive during sweep |
 | Cache invalidation | Cleared on any geometry change; display-only params (Show modes, Listening Area) do NOT invalidate |
 
-### V1.3.0 (Room Data Import + Schroeder Frequency Display)
+### V1.3.0 (Room Data Import + Schroeder Frequency Display + Structural Cleanup)
 
-| Feature | Deliverable |
-|---------|-------------|
+| Feature / Change | Deliverable |
+|------------------|-------------|
 | Room Data Import | "Import data" button between Export/Settings; reads `[Parameters]` section of exported CSV; validates all values before applying any; signals blocked during batch-set; single recompute after import; clean error dialog on any failure |
 | Schroeder Frequency Display | `schroeder_frequency()` in `physics.py`; live-updating `Est. Schroeder: ~NNN Hz` label beneath the frequency-response curve; `valueChanged` wired to all room-dim + wall-reflection sliders |
+| **Structural Cleanup (5 commits)** | `widgets.py` (view widgets extracted from `main.py`); `csv_io.py` (Qt-free CSV parse/format); `constants.py` (phase tokens, colors, wall names); `_num_src()` + `_physics_snapshot()` helpers; dead overlay code removed from `render.py`. `main.py` −240 lines. No physics or UI layout changes. |
 
 ### V1.2.2 (Full-band scaling — accurate mode normalization overhaul)
 
@@ -257,21 +258,40 @@ In `physics.py`, mode amplitude is weighted by mode type (Axial / Tangential / O
 
 ```
 swv_desktop/
-├── main.py      # Controller + View skeleton
+├── main.py         # Controller + View skeleton (~1 230 lines after V1.3.0 cleanup)
 │                   #   CalibWorker(QThread) — full-band background sweep
-│                   #   MainWindow, LabeledSlider, XYZSliders
+│                   #   MainWindow
 │                   #   Signal wiring, _refresh(), _on_render_mode_changed()
 │                   #   Full-band scaling: _invalidate_calibration(),
 │                   #     _compute_approx_global_max(), _on_fullband_toggled(),
 │                   #     _on_calibrate_clicked(), _on_calib_progress(),
 │                   #     _on_calib_finished()
 │                   #   _on_display_param_committed() — display-only handler
-│                   #   symmetry logic, export, settings dialog opener
-│                   #   on_import_clicked / _read_parameters_section /
-│                   #     _parse_imported_params / _apply_imported_params —
-│                   #     CSV import (V1.3.0)
+│                   #   symmetry logic, settings dialog opener
+│                   #   _num_src() — returns 1 or 2 (V1.3.0 helper)
+│                   #   _physics_snapshot() — PhysicsSnapshot namedtuple (V1.3.0)
+│                   #   on_import_clicked / _import_set_slider /
+│                   #     _apply_imported_params — CSV import (V1.3.0)
 │                   #   _update_schroeder_display() — live label (V1.3.0)
 │                   #   Entry point: main()
+│
+├── widgets.py      # View — reusable Qt widgets (extracted V1.3.0)
+│                   #   mono() — Courier font factory
+│                   #   LabeledSlider — float slider (valueChanged + committed)
+│                   #   XYZSliders — titled group of three LabeledSliders
+│                   #   make_placeholder — simple labelled placeholder frame
+│
+├── csv_io.py       # I/O — Qt-free CSV format logic (extracted V1.3.0)
+│                   #   load_parameters(path) — read + validate [Parameters] section
+│                   #   write_export(path, *, ...) — full three-section CSV export
+│                   #   read_parameters_section, parse_parameters — parse helpers
+│                   #   phase_label_to_index — case-insensitive phase-label match
+│
+├── constants.py    # Shared literals (extracted V1.3.0)
+│                   #   CorrMode — phase-correction token strings
+│                   #   SPK_COLOR, MIC_COLOR — equipment marker colors
+│                   #   WALL_* — wall identifier strings (6 constants)
+│                   #   WALL_PAIRS, WALL_NAMES — axis-paired and flat tuples
 │
 ├── render.py       # View — 3D (PyVista)
 │                   #   Render3D class: QtInteractor wrapper
@@ -410,12 +430,18 @@ cd /home/ttatsuta/Projects/swv_desktop
 
 | Method | Role |
 |--------|------|
-| `on_import_clicked` | File dialog → parse → validate → apply or abort |
-| `_read_parameters_section(path)` | `csv.reader` walk; collects `{name: value}` from `[Parameters]` only |
-| `_parse_imported_params(raw)` | Type-converts and validates all values; raises `KeyError`/`ValueError` on bad input |
-| `_phase_label_to_index(label)` | Case-insensitive substring match → combo index |
+| `on_import_clicked` | File dialog → `csv_io.load_parameters(path)` → apply or error dialog |
 | `_import_set_slider(slider, value)` | Clamp to `[_vmin, _vmax]` + log warning on clamp |
 | `_apply_imported_params(v)` | Block all signals → set room dims first → re-sync limits → set rest → unblock → single refresh |
+
+**Parsing helpers (in `csv_io.py` — Qt-free, extracted during structural cleanup):**
+
+| Function | Role |
+|----------|------|
+| `read_parameters_section(path)` | `csv.reader` walk; collects `{name: value}` from `[Parameters]` only |
+| `parse_parameters(raw)` | Type-converts and validates all values; raises `KeyError`/`ValueError` on bad input |
+| `phase_label_to_index(label)` | Case-insensitive substring match → combo index |
+| `load_parameters(path)` | Convenience wrapper: `read_parameters_section` → `parse_parameters` |
 
 **Signal-storm prevention:** `blockSignals(True)` on every affected `LabeledSlider` and `QComboBox` during batch-set. Room dimensions applied before speaker/mic so position-slider maxima are correct when those values land.
 
@@ -437,19 +463,87 @@ cd /home/ttatsuta/Projects/swv_desktop
 
 ---
 
-## 14. Next Session Roadmap
+## 14. Completed Tasks (V1.3.0 Structural Cleanup)
+
+Five commits on branch `refactor/structural-cleanup`. Each was verified before the
+next by a smoke-test harness (launch → recompute → full-band → contour → export/import
+round-trip → stable Schroeder `~192 Hz`).
+
+### §3.1 — Extract view widgets → `widgets.py` ✅
+
+`LabeledSlider`, `XYZSliders`, `mono`, `make_placeholder`, `DARK_BG`,
+`PLACEHOLDER_TEXT` extracted from `main.py` into a new `widgets.py`. These are
+pure Qt presentation classes with no dependency on `MainWindow` or the physics
+model. `main.py` now does `from widgets import LabeledSlider, XYZSliders, mono`.
+
+### §1.1 — Remove dead overlay code from `render.py` ✅
+
+- `_setup_overlay` method (~27 lines) deleted — it was already commented out at its
+  only call site and had no other use.
+- `import vtk` removed — its only reference was inside `_setup_overlay`.
+- Module docstring trimmed: X-ray/overlay paragraphs that described the dead code
+  were removed to avoid confusing future readers.
+
+### §4.1+§4.2 — Controller helpers in `main.py` ✅
+
+**`_num_src(self) -> int`** — returns `2 if self.source_combo.currentText() == "2" else 1`.
+Replaced 5 identical inline expressions.
+
+**`_physics_snapshot(self) -> PhysicsSnapshot`** — gathers the seven values
+(`room`, `spk1`, `spk2`, `mic`, `num_src`, `corr`, `room_scatter`) that every
+physics call needs. A `PhysicsSnapshot` namedtuple is defined at module level
+(after `BANNER_H`). Replaced 3 duplicate gather blocks.
+
+### §3.2 — Extract CSV logic → `csv_io.py` ✅
+
+All CSV format knowledge moved to a new Qt-free `csv_io.py`:
+- `read_parameters_section`, `parse_parameters`, `phase_label_to_index`,
+  `load_parameters` — import path
+- `write_export(path, *, room, spk1, spk2, mic, ...)` — export path
+
+`main.py` lost `import csv`, `_IMPORT_WALL_NAMES`, `_read_parameters_section`,
+`_parse_imported_params`, `_phase_label_to_index`, and the inline export formatter.
+Both `on_import_clicked` and `on_export_clicked` now delegate to `csv_io`.
+
+### §2.3+§2.1+§2.4 — Centralise literals → `constants.py` ✅
+
+New `constants.py` with no project-module imports (cycle-safe):
+
+```python
+class CorrMode:
+    UNCORRELATED = "Uncorrelated"
+    GLOBAL_CANCEL = "Global Cancel"
+    TRUE_COMPLEX = "True Complex Field"
+
+SPK_COLOR = "#38bdf8"   # speaker cyan-blue
+MIC_COLOR = "#f4f4f4"   # mic bright white
+
+WALL_LEFT = "Left (X=0)";  WALL_RIGHT = "Right (X=Lx)"
+WALL_FRONT = "Front (Y=0)"; WALL_BACK = "Back (Y=Ly)"
+WALL_FLOOR = "Floor (Z=0)"; WALL_CEILING = "Ceiling (Z=Lz)"
+WALL_PAIRS = ((WALL_LEFT, WALL_RIGHT), ...)
+WALL_NAMES = tuple(name for pair in WALL_PAIRS for name in pair)
+```
+
+`main.py`, `physics.py`, `render.py`, `graphs.py` all `import constants` and
+reference `constants.SPK_COLOR` / `constants.WALL_LEFT` / `constants.CorrMode.*`
+instead of their previous local copies.
+
+---
+
+## 15. Next Session Roadmap
 
 No features are currently planned. Outstanding nice-to-haves from prior sessions:
 
 ---
 
-**Both V1.3.0 features are implemented.** See section 13 above for full implementation detail.
+**All V1.3.0 work is complete.** See sections 13–14 above for full implementation detail.
 
 ---
 
-## 15. Session Conclusion
+## 16. Session Conclusion
 
-**V1.3.0 is a stable, feature-complete milestone.** Room Data Import and Schroeder Frequency Display are both complete and tested.
+**V1.3.0 is a stable, feature-complete milestone.** Room Data Import, Schroeder Frequency Display, and the structural cleanup (5 refactoring commits) are all complete and verified.
 
 **This session is officially closed.** The next session should:
 1. Read this document and `CHANGELOG.md` first.

@@ -25,9 +25,11 @@ values are set.
 If any required parameter is missing or malformed the import is aborted before
 any state is applied; the user is shown an informative error dialog.
 
-**Files changed:** `main.py` (new `on_import_clicked`, `_read_parameters_section`,
-`_parse_imported_params`, `_phase_label_to_index`, `_import_set_slider`,
-`_apply_imported_params` methods; updated button row). `physics.py` unchanged.
+**Files changed:** `main.py` (new `on_import_clicked`, `_import_set_slider`,
+`_apply_imported_params` methods; updated button row). `csv_io.py` (new
+`load_parameters`, `read_parameters_section`, `parse_parameters`,
+`phase_label_to_index` — Qt-free; extracted during structural cleanup below).
+`physics.py` unchanged.
 
 ---
 
@@ -59,6 +61,27 @@ call).
 `_WALL_AREA_DIMS` table; `import math` added). `main.py` (new `schroeder_lbl`
 widget, `_update_schroeder_display()` method, live signal wiring, startup
 population, and post-import refresh).
+
+---
+
+### Refactored: Structural Cleanup
+
+Five focused commits on branch `refactor/structural-cleanup` reorganise the
+codebase without changing any observable behaviour. All five were verified by
+a smoke-test harness (construction → recompute → full-band → contour →
+export/import round-trip → stable Schroeder readout).
+
+| Commit | Scope | What moved / was removed |
+|--------|-------|--------------------------|
+| **§3.1** | `main.py` → `widgets.py` | `LabeledSlider`, `XYZSliders`, `mono`, `make_placeholder`, `DARK_BG`, `PLACEHOLDER_TEXT` — pure Qt presentation, no controller coupling |
+| **§1.1** | `render.py` | Deleted unreachable `_setup_overlay` method (~27 lines) + dropped unused `import vtk`; fixed misleading module docstring (X-ray/overlay paragraphs removed) |
+| **§4.1+§4.2** | `main.py` | New `_num_src()` helper (eliminates 5 inline ternaries); new `_physics_snapshot()` helper returns `PhysicsSnapshot` namedtuple (eliminates 3 duplicate parameter-gather blocks) |
+| **§3.2** | `main.py` → `csv_io.py` | `_read_parameters_section`, `_parse_imported_params`, `_phase_label_to_index`, CSV export formatter → Qt-free `csv_io.py`; `main.py` delegates via `csv_io.load_parameters()` / `csv_io.write_export()` |
+| **§2.3+§2.1+§2.4** | all modules → `constants.py` | Phase-correction tokens (`CorrMode`), equipment colors (`SPK_COLOR`, `MIC_COLOR`), wall name strings and pairs (`WALL_*`, `WALL_PAIRS`, `WALL_NAMES`) — previously duplicated independently in `main.py`, `physics.py`, `render.py`, `graphs.py` |
+
+**Net change:** `main.py` reduced by ~240 lines. Three new source files added:
+`widgets.py`, `csv_io.py`, `constants.py`. No physics, no signal wiring, and no
+UI layout was changed.
 
 ---
 
