@@ -13,12 +13,10 @@ On import, only ``[Parameters]`` is parsed; the other two sections are ignored.
 
 import csv
 
+import constants
+
 # Wall parameter names in export order. The CSV stores them prefixed with "Wall ".
-WALL_NAMES = (
-    "Left (X=0)", "Right (X=Lx)",
-    "Front (Y=0)", "Back (Y=Ly)",
-    "Floor (Z=0)", "Ceiling (Z=Lz)",
-)
+WALL_NAMES = constants.WALL_NAMES
 
 
 def phase_label_to_index(label):

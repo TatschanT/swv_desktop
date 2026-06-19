@@ -28,11 +28,12 @@ import pyvista as pv
 from pyvistaqt import QtInteractor
 
 import config as app_config
+import constants
 import physics
 
-# Colors
-SPK_COLOR = "#38bdf8"      # bright cyan-blue
-MIC_COLOR = "#f4f4f4"      # bright white
+# Colors (equipment marker colors are shared with the 2D view -> constants.py)
+SPK_COLOR = constants.SPK_COLOR
+MIC_COLOR = constants.MIC_COLOR
 OUTLINE_COLOR = "#dddddd"
 FLOOR_DARK = "#16233f"     # checkerboard: dark blue
 FLOOR_LIGHT = "#b8c4d0"    # checkerboard: light gray

@@ -2,6 +2,7 @@ import math
 import numpy as np
 from dataclasses import dataclass
 import config as app_config
+import constants
 
 # ==========================================
 # Data Models
@@ -62,12 +63,12 @@ def calc_room_modes(room: RoomConfig, max_order: int = 4, max_freq: float = None
 # Wall name -> the two room dimensions whose product is that wall's area.
 # Keys match the UI's wall-reflection sliders (main.py).
 _WALL_AREA_DIMS = {
-    "Left (X=0)":     ("ly", "lz"),
-    "Right (X=Lx)":   ("ly", "lz"),
-    "Front (Y=0)":    ("lx", "lz"),
-    "Back (Y=Ly)":    ("lx", "lz"),
-    "Floor (Z=0)":    ("lx", "ly"),
-    "Ceiling (Z=Lz)": ("lx", "ly"),
+    constants.WALL_LEFT:    ("ly", "lz"),
+    constants.WALL_RIGHT:   ("ly", "lz"),
+    constants.WALL_FRONT:   ("lx", "lz"),
+    constants.WALL_BACK:    ("lx", "lz"),
+    constants.WALL_FLOOR:   ("lx", "ly"),
+    constants.WALL_CEILING: ("lx", "ly"),
 }
 
 def schroeder_frequency(lx: float, ly: float, lz: float, wall_reflections: dict) -> float:
@@ -191,7 +192,7 @@ def compute_f_response_1d(room: RoomConfig, spk1: Position, spk2: Position, mic:
 
     max_nx, max_ny, max_nz = get_max_modes(room)
 
-    if "True Complex Field" in corr_mode:
+    if constants.CorrMode.TRUE_COMPLEX in corr_mode:
         P_complex_1_mics = np.zeros((num_mics, len(freqs_1d)), dtype=complex)
         P_complex_2_mics = np.zeros((num_mics, len(freqs_1d)), dtype=complex)
 
@@ -233,7 +234,7 @@ def compute_f_response_1d(room: RoomConfig, spk1: Position, spk2: Position, mic:
                     psi1 = get_psi(nx, sx, Lx, Rx) * get_psi(ny, sy, Ly, Ry) * get_psi(nz, sz, Lz, Rz)
                     if num_src == 2:
                         psi2 = get_psi(nx, sx2, Lx, Rx) * get_psi(ny, sy2, Ly, Ry) * get_psi(nz, sz2, Lz, Rz)
-                        if "Global Cancel" in corr_mode:
+                        if constants.CorrMode.GLOBAL_CANCEL in corr_mode:
                             exc = np.abs(psi1 + psi2) / 2.0
                         else:
                             exc = np.sqrt(np.abs(psi1)**2 + np.abs(psi2)**2) / 2.0
@@ -283,7 +284,7 @@ def compute_tensor_3d(room: RoomConfig, spk1: Position, spk2: Position, num_src:
     tensor = np.zeros((len(freqs_3d), len(x), len(y), len(z)))
     max_nx, max_ny, max_nz = get_max_modes(room)
 
-    if "True Complex Field" in corr_mode:
+    if constants.CorrMode.TRUE_COMPLEX in corr_mode:
         for i, f_query in enumerate(freqs_3d):
             P_complex_1 = np.zeros_like(X, dtype=np.complex128)
             P_complex_2 = np.zeros_like(X, dtype=np.complex128)
@@ -324,7 +325,7 @@ def compute_tensor_3d(room: RoomConfig, spk1: Position, spk2: Position, num_src:
                     psi1 = get_psi(nx, sx, Lx, Rx) * get_psi(ny, sy, Ly, Ry) * get_psi(nz, sz, Lz, Rz)
                     if num_src == 2:
                         psi2 = get_psi(nx, sx2, Lx, Rx) * get_psi(ny, sy2, Ly, Ry) * get_psi(nz, sz2, Lz, Rz)
-                        if "Global Cancel" in corr_mode:
+                        if constants.CorrMode.GLOBAL_CANCEL in corr_mode:
                             exc = np.abs(psi1 + psi2) / 2.0
                         else:
                             exc = np.sqrt(np.abs(psi1)**2 + np.abs(psi2)**2) / 2.0

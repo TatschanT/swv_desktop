@@ -34,6 +34,7 @@ from PySide6.QtWidgets import (
 
 # Model layer (streamlit-free desktop port)
 import config as app_config
+import constants
 import csv_io
 import physics
 
@@ -373,9 +374,9 @@ class MainWindow(QMainWindow):
         """Per-axis reflection coefficient = mean of the two opposing walls
         (matches the original Streamlit model)."""
         w = self.wall_sliders
-        Rx = (w["Left (X=0)"].value() + w["Right (X=Lx)"].value()) / 2.0
-        Ry = (w["Front (Y=0)"].value() + w["Back (Y=Ly)"].value()) / 2.0
-        Rz = (w["Floor (Z=0)"].value() + w["Ceiling (Z=Lz)"].value()) / 2.0
+        Rx = (w[constants.WALL_LEFT].value() + w[constants.WALL_RIGHT].value()) / 2.0
+        Ry = (w[constants.WALL_FRONT].value() + w[constants.WALL_BACK].value()) / 2.0
+        Rz = (w[constants.WALL_FLOOR].value() + w[constants.WALL_CEILING].value()) / 2.0
         return Rx, Ry, Rz
 
     def _current_room(self):
@@ -389,13 +390,13 @@ class MainWindow(QMainWindow):
         return physics.Position(grp.x.value(), grp.y.value(), grp.z.value())
 
     def _corr_mode(self):
-        """Map the UI combo label to the substring physics.py expects."""
+        """Map the UI combo label to the token physics.py matches."""
         label = self.phase_combo.currentText().lower()
         if "complex" in label:
-            return "True Complex Field"
+            return constants.CorrMode.TRUE_COMPLEX
         if "cancel" in label:
-            return "Global Cancel"
-        return "Uncorrelated"
+            return constants.CorrMode.GLOBAL_CANCEL
+        return constants.CorrMode.UNCORRELATED
 
     def _num_src(self):
         """Active source count (1 or 2) from the Source combo."""
@@ -1024,12 +1025,8 @@ class MainWindow(QMainWindow):
         wall_lay = QGridLayout(wall_box)
         wall_lay.setSpacing(4)
 
-        # 3 rows x 2 columns: Left/Right, Front/Back, Top/Bottom
-        wall_pairs = [
-            ("Left (X=0)", "Right (X=Lx)"),
-            ("Front (Y=0)", "Back (Y=Ly)"),
-            ("Floor (Z=0)", "Ceiling (Z=Lz)"),
-        ]
+        # 3 rows x 2 columns: Left/Right, Front/Back, Floor/Ceiling
+        wall_pairs = constants.WALL_PAIRS
         self.wall_sliders = {}
         R0 = app_config.AppDefaults.R
         for row, (a, b) in enumerate(wall_pairs):
