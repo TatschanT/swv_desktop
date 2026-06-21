@@ -43,6 +43,11 @@ To bridge the gap between ideal theoretical physics and real-world perception, u
 ### Windows
 Please download the Windows build from [Release](https://github.com/TatschanT/swv_desktop/releases/). Extract it to any folder and run SWV.exe.
 
+**⚠️ Windows Startup Notice**
+Since this is a free, open-source application, the .exe file does not include a paid digital signature. On your first launch, Windows SmartScreen may display a blue warning ("Windows protected your PC").
+To launch the app safely, click "More info" and then select "Run anyway".
+(Tip: You can prevent this by right-clicking the downloaded ZIP, opening Properties, checking "Unblock", and then extracting.)
+
 ### Running on a local environment on Mac and Linux 
 ### Prerequisites
 - Python 3.10+ (Tested with Python 3.14/3.10)
