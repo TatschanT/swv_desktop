@@ -6,6 +6,6 @@
   },
   "SimResolution": {
     "FREQ_1D_STEP": 1,
-    "GRID_SIZE_NORMAL": 25
+    "GRID_SIZE_NORMAL": 33
   }
 }

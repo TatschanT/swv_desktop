@@ -924,7 +924,7 @@ class MainWindow(QMainWindow):
         # frequency-response curve. Updated live from room dims + wall sliders.
         self.schroeder_lbl = QLabel("Est. Schroeder: —")
         self.schroeder_lbl.setFont(mono(9))
-        self.schroeder_lbl.setStyleSheet("color: #aaaaaa;")
+        self.schroeder_lbl.setStyleSheet("color: #777777;")
         smooth_row.addWidget(self.schroeder_lbl)
         smooth_row.addStretch()
         self.show_modes_chk = QCheckBox("Show room modes")
