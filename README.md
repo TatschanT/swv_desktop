@@ -1,4 +1,5 @@
 ![Standing Wave Viewer image](images/SWVtitle.jpg)
+[日本語readmeはこちら](https://github.com/TatschanT/swv_desktop/blob/main/README_J.md)
 
 Standing Wave Viewer is a 3D acoustic simulation and visualization tool built with Python, **PySide6 (Qt)**, and **PyVista (VTK)**. It calculates and visualizes room modes (standing waves) and low-frequency interference patterns to help optimize subwoofer/speaker placement and listening positions. To learn technical details behind it, please refer to documents/Q_A_en.md.
 
@@ -69,7 +70,7 @@ To launch the app safely, click "More info" and then select "Run anyway".
    python main.py
    ```
 
-**Linux / Wayland Note:** 
+** Linux / Wayland Note:** 
 If you are using a Linux distribution with Wayland (e.g., Fedora), VTK might have compatibility issues. The application handles this internally by forcing X11 mode (`QT_QPA_PLATFORM="xcb"`) on Linux, so no extra launch flags are needed.
 
 ## Attribution
