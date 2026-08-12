@@ -11,7 +11,7 @@ controller (``MainWindow``):
   * ``make_placeholder``- a simple labelled placeholder frame.
 """
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtGui import QFont
 from PySide6.QtWidgets import (
     QFrame,
@@ -27,6 +27,13 @@ from PySide6.QtWidgets import (
 # Monotone palette
 DARK_BG = "#1e1e1e"
 PLACEHOLDER_TEXT = "#888888"
+
+# Debounce window (ms) used ONLY to detect "gesture finished" for inputs that
+# have no natural press/release pair -- keyboard nudges (arrow/Page/Home/End)
+# and mouse-wheel notches on a focused QSlider. A real mouse drag never uses
+# this: QAbstractSlider.sliderReleased already fires instantly on release, so
+# dragging performance and latency are completely unchanged by this constant.
+COMMIT_DEBOUNCE_MS = 150
 
 
 def mono(size=10, bold=False):
@@ -50,6 +57,15 @@ class LabeledSlider(QWidget):
     Emits `committed(float)` only when the user *finishes* an interaction
     (releases the slider handle, or commits the line edit) -- use this to
     trigger heavy recomputation exactly once per gesture.
+
+    A real mouse drag commits INSTANTLY on release (unchanged, zero added
+    cost). Keyboard nudges (arrow/Page/Home/End) and mouse-wheel notches on a
+    focused slider have no press/release pair at all -- Qt's
+    `sliderReleased` never fires for them -- so without help `committed`
+    would never fire for those either. Those two input paths debounce
+    instead: `committed` fires once, `COMMIT_DEBOUNCE_MS` after the last such
+    change, coalescing a burst (key-repeat, a fast wheel scroll) into a
+    single recomputation. Dragging performance is untouched either way.
     """
 
     valueChanged = Signal(float)
@@ -103,6 +119,13 @@ class LabeledSlider(QWidget):
         ctrl_row.addWidget(self.edit)
         root.addLayout(ctrl_row)
 
+        # Fires `committed` for keyboard/wheel changes only -- see class
+        # docstring. Single-shot + restarted on every qualifying change, so a
+        # burst collapses into exactly one emission after it settles.
+        self._commit_timer = QTimer(self)
+        self._commit_timer.setSingleShot(True)
+        self._commit_timer.timeout.connect(self._emit_committed)
+
         # Keep slider <-> edit in sync
         self.slider.valueChanged.connect(self._on_slider)
         self.edit.editingFinished.connect(self._on_edit)
@@ -110,6 +133,10 @@ class LabeledSlider(QWidget):
         self.slider.sliderReleased.connect(
             lambda: self.committed.emit(self.value())
         )
+        # A fresh mouse press supersedes any pending debounce -- the release
+        # handler above commits instantly instead, so this avoids a stray
+        # leftover timer firing mid-drag.
+        self.slider.sliderPressed.connect(self._commit_timer.stop)
 
     # -- helpers ---------------------------------------------------------
     def _fmt(self, v):
@@ -192,6 +219,17 @@ class LabeledSlider(QWidget):
         # Slider drag -> mirror into edit, then notify listeners with real value.
         self.edit.setText(self._fmt(self._to_value(tick)))
         self.valueChanged.emit(self._to_value(tick))
+        # isSliderDown() is True only while an actual mouse press/drag is in
+        # progress -- that case already commits instantly on release (see
+        # __init__), so skip the timer for it: dragging stays exactly as
+        # lightweight as before. Everything else reaching here (keyboard,
+        # wheel, or a programmatic setValue()/setMaxValue() from elsewhere in
+        # the app) has no release event of its own, so schedule one.
+        if not self.slider.isSliderDown():
+            self._commit_timer.start(COMMIT_DEBOUNCE_MS)
+
+    def _emit_committed(self):
+        self.committed.emit(self.value())
 
     def _on_edit(self):
         try:

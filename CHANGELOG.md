@@ -2,6 +2,59 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.3.1] - 2026-08-12
+
+### Added: Flat-Field Warning (Wall Reflection Coefficients)
+
+When every axis's reflection coefficient collapses to zero (`Rx == Ry == Rz
+== 0`, i.e. both walls of every pair are set fully absorptive), `calc_shape()`
+degenerates to a spatial constant on every mode (see `physics.py`), so the 3D
+pressure field carries no spatial structure and the default per-frequency
+normalization renders it fully transparent — the view went silently blank
+with no indication why.
+
+A new label under the "Wall reflection coefficients" panel now reads
+**"⚠ All walls fully absorptive (R=0) — field has no spatial structure"**
+whenever this exact condition is met, and clears otherwise. Deliberately
+setting a SINGLE wall to R=0 — a legitimate way to inspect that wall's
+first-order reflection in isolation — does NOT trigger it, since the other
+two axes still carry real modal structure.
+
+The check is cheap arithmetic (reuses `_wall_reflection()`, no physics
+recompute) wired to the six wall sliders' `valueChanged`, so it updates live
+while dragging.
+
+**Files changed:** `main.py` (new `_update_flat_field_warning()` method,
+`flat_field_lbl` widget, signal wiring, startup call). `physics.py` and
+`render.py` unchanged.
+
+---
+
+### Fixed: Position Sliders — Keyboard/Wheel Changes Never Reached the 2D/3D Views
+
+With **Dynamic update** OFF (the default), a room/speaker/mic/wall slider
+only refreshed the 2D plots and the 3D field on `committed`, which was wired
+solely to `QSlider.sliderReleased` — a signal Qt emits **only for a mouse
+press-drag-release gesture**. Adjusting a slider via the keyboard (arrow /
+Page / Home / End) or the mouse wheel changes its value (`valueChanged` still
+fires, so the numeric read-out was correct) but never emits
+`sliderReleased`, so `committed` never fired: the 2D marker and 3D field
+silently kept showing the pre-change state until some unrelated slider was
+next dragged-and-released, at which point they would jump to the
+already-changed values all at once — read by the user as "the marker didn't
+move" or "jumped to the wrong place."
+
+`LabeledSlider` now detects this case via `QSlider.isSliderDown()` (`True`
+only during an actual mouse drag) and, when a value change arrives without
+an active drag, starts a 150 ms single-shot debounce timer that fires
+`committed` once input settles — coalescing key-repeat or a fast wheel
+scroll into a single recomputation. A genuine mouse drag is completely
+unaffected: it still commits instantly on release, with zero added overhead.
+
+**Files changed:** `widgets.py` (`LabeledSlider`: new `COMMIT_DEBOUNCE_MS`
+constant, `_commit_timer`, `_emit_committed()`, updated `_on_slider()`).
+`main.py`, `physics.py`, `render.py` unchanged.
+
 ## [1.3.0] - 2026-06-19
 
 ### Added: Room Data Import

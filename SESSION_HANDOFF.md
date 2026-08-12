@@ -1,6 +1,6 @@
 # Standing Wave Viewer — Session Handoff Document
-**Date:** 2026-06-19  
-**Status:** **V1.3.0 STABLE** ✅ — Room Data Import + Schroeder Frequency Display complete. Structural refactoring complete (5 commits on `refactor/structural-cleanup`). Session closed.  
+**Date:** 2026-08-12  
+**Status:** **V1.3.1 STABLE** ✅ — Flat-field warning (wall reflections) + keyboard/wheel commit debounce (position/wall sliders) complete. Session closed.  
 **Project:** `swv_desktop` (`/home/ttatsuta/Projects/swv_desktop`)  
 **Venv:** `.venv/` (Python 3.14, PySide6 6.11, PyVista 0.48, pyvistaqt 0.11, Matplotlib 3.10, NumPy 2.4)
 
@@ -68,6 +68,13 @@
 | Room Data Import | "Import data" button between Export/Settings; reads `[Parameters]` section of exported CSV; validates all values before applying any; signals blocked during batch-set; single recompute after import; clean error dialog on any failure |
 | Schroeder Frequency Display | `schroeder_frequency()` in `physics.py`; live-updating `Est. Schroeder: ~NNN Hz` label beneath the frequency-response curve; `valueChanged` wired to all room-dim + wall-reflection sliders |
 | **Structural Cleanup (5 commits)** | `widgets.py` (view widgets extracted from `main.py`); `csv_io.py` (Qt-free CSV parse/format); `constants.py` (phase tokens, colors, wall names); `_num_src()` + `_physics_snapshot()` helpers; dead overlay code removed from `render.py`. `main.py` −240 lines. No physics or UI layout changes. |
+
+### V1.3.1 (Flat-field warning + keyboard/wheel commit debounce)
+
+| Fix / Change | Deliverable |
+|--------------|-------------|
+| Flat-field warning | New label under "Wall reflection coefficients" reads "⚠ All walls fully absorptive (R=0) — field has no spatial structure" only when `Rx == Ry == Rz == 0` simultaneously; a single wall at R=0 (inspecting that wall's first-order reflection) does NOT trigger it |
+| Keyboard/wheel commit debounce | `LabeledSlider` now fires `committed` for keyboard (arrow/Page/Home/End) and mouse-wheel changes too, via a 150 ms single-shot debounce gated on `QSlider.isSliderDown()`; mouse-drag commit-on-release is untouched (zero added cost) |
 
 ### V1.2.2 (Full-band scaling — accurate mode normalization overhaul)
 
@@ -186,6 +193,13 @@ Rx = (wall_sliders["Left (X=0)"].value() + wall_sliders["Right (X=Lx)"].value())
 Ry = (wall_sliders["Front (Y=0)"].value() + wall_sliders["Back (Y=Ly)"].value()) / 2.0
 Rz = (wall_sliders["Floor (Z=0)"].value() + wall_sliders["Ceiling (Z=Lz)"].value()) / 2.0
 ```
+
+**V1.3.1 update:** a single wall at `R=0` is a legitimate, supported way to
+inspect that wall's first-order reflection in isolation — only ALL THREE axes
+simultaneously at `R=0` collapses the whole field, and `main.py`'s new
+`_update_flat_field_warning()` now surfaces that exact case to the user
+instead of leaving the view silently blank. The underlying rule above (no
+runtime clamp exists on the wall sliders) is unchanged.
 
 ### 2.7 L/R Symmetry — Verified Mirror Axes
 
@@ -531,19 +545,93 @@ instead of their previous local copies.
 
 ---
 
-## 15. Next Session Roadmap
+## 15. Completed Tasks (V1.3.1)
+
+Both fixes originated from real usage (not planned work), diagnosed and
+verified interactively in this session.
+
+### Fix A — Flat-Field Warning (`main.py`) ✅
+
+**Root cause:** `physics.calc_shape(n, pos, L, R)` collapses to a spatial
+constant (`1.0`, independent of `pos`) whenever `R == 0`. If `Rx`, `Ry` AND
+`Rz` are all `0` at once (every wall-pair average zero), every non-zero mode
+degenerates to a constant, so the 3D field has no spatial structure left —
+`render._normalize`'s default 2σ branch then returns an all-zero scalar
+array (`robust_max - robust_min < 1e-12`), and the volume renders fully
+transparent with no explanation. This is reachable from ordinary UI use: the
+wall sliders range `[0.0, 1.0]` with no lower-bound guard (see 2.6).
+
+**New method `_update_flat_field_warning(self, *_)`:** reads `Rx, Ry, Rz` via
+the existing `_wall_reflection()` helper (no physics recompute) and sets
+`flat_field_lbl`'s text only when all three are below `1e-9`; clears it
+otherwise. A single wall at `R=0` — deliberately inspecting that wall's
+first-order reflection — leaves the other two axes intact and does NOT
+trigger the warning.
+
+**UI:** `flat_field_lbl` (`mono(9)`, `#e6a23c`, word-wrapped) sits directly
+under the "Wall reflection coefficients" `QGroupBox`.
+
+**Wiring:** all six wall sliders' `valueChanged` (not `committed`) → live
+while dragging, mirroring `_update_schroeder_display`'s pattern. Also called
+once at startup.
+
+---
+
+### Fix B — Keyboard/Wheel Slider Changes Never Committed (`widgets.py`) ✅
+
+**Root cause:** with **Dynamic update** OFF (the default), the 2D/3D views
+refresh only on `LabeledSlider.committed`, which was wired solely to
+`QSlider.sliderReleased` — a signal Qt emits **only for a mouse
+press-drag-release gesture**. Keyboard (arrow/Page/Home/End) and mouse-wheel
+changes fire `valueChanged` (so the numeric read-out was correct) but never
+`sliderReleased`, so `committed` never fired: the 2D marker / 3D field
+silently kept the pre-change state until an unrelated slider was next
+dragged-and-released, at which point everything jumped to the already-changed
+values at once. Reported symptom: the mic-position marker on the 2D view
+"doesn't move" or "jumps to the wrong place," very rarely and
+irreproducibly — an input-method-dependent gap, not a random fault.
+
+**Fix:** `LabeledSlider._on_slider()` now checks `QSlider.isSliderDown()`
+(`True` only during an actual mouse drag). When a value change arrives
+without an active drag, a single-shot `QTimer` (`COMMIT_DEBOUNCE_MS = 150`)
+is (re)started; on timeout it emits `committed`. A burst — key-repeat, a fast
+wheel scroll — keeps restarting the timer and so collapses into exactly one
+emission once input settles. `sliderPressed` stops any pending timer so a
+fresh mouse drag never races a stray leftover firing. A genuine mouse drag
+is completely unaffected: it still commits instantly on release, unchanged.
+
+**Verified interactively (2026-08-12):** drag mic slider (marker moves
+live) → release → nudge one more tick with the arrow key while focus
+remains on the slider → marker now updates after the debounce settles,
+promptly enough that no added lag is perceptible.
+
+**Known residual gap (not fixed, low priority):** `setMaxValue()` /
+`setMinValue()` clamp notifications (room resize shrinking a speaker/mic
+position back into bounds) still bypass `_on_slider()` — they call
+`self.valueChanged.emit(...)` directly — so they aren't covered by this
+debounce. In practice this self-corrects because the room-dimension slider
+that triggers the clamp always fires its own `committed` on release; see the
+nice-to-haves list below if this ever needs closing fully.
+
+---
+
+## 16. Next Session Roadmap
 
 No features are currently planned. Outstanding nice-to-haves from prior sessions:
 
 ---
 
-**All V1.3.0 work is complete.** See sections 13–14 above for full implementation detail.
+**All V1.3.0 and V1.3.1 work is complete.** See sections 13–15 above for full implementation detail.
 
 ---
 
-## 16. Session Conclusion
+## 17. Session Conclusion
 
-**V1.3.0 is a stable, feature-complete milestone.** Room Data Import, Schroeder Frequency Display, and the structural cleanup (5 refactoring commits) are all complete and verified.
+**V1.3.1 is a stable milestone** built on top of the feature-complete V1.3.0.
+Two UX gaps surfaced through real usage — a silently blank 3D view when
+every wall is fully absorptive, and slider changes made via keyboard/wheel
+never reaching the 2D/3D views while Dynamic update is OFF — are both fixed
+and verified interactively.
 
 **This session is officially closed.** The next session should:
 1. Read this document and `CHANGELOG.md` first.
@@ -554,3 +642,4 @@ No features are currently planned. Outstanding nice-to-haves from prior sessions
 - Windows `.exe` packaging: PyInstaller `.spec` file.
 - Per-mode scalar bar, contour opacity slider, export of the 3D field to VTK/VTI format, mode labels on the guide lines.
 - The `calib_db_range` asymmetry may need further tuning — the current implementation clips the ratio upper bound at `1.0`, making the upper dB window effectively 0 dB (values above the median all map to 0.5). A `10.0` clip would give a true +20 dB upper window if that proves preferable.
+- `LabeledSlider.setMaxValue()` / `setMinValue()` clamp notifications still bypass the V1.3.1 commit-debounce (see Fix B's residual-gap note in section 15) — low priority since the room-dimension slider's own release already self-corrects it.
