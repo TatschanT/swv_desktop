@@ -167,6 +167,7 @@ class MainWindow(QMainWindow):
 
         # Populate the Schroeder-frequency label from the startup state.
         self._update_schroeder_display()
+        self._update_flat_field_warning()
 
     # ------------------------------------------------------------------
     # LEFT PANEL
@@ -366,6 +367,27 @@ class MainWindow(QMainWindow):
             self.schroeder_lbl.setText("Est. Schroeder: —")
         else:
             self.schroeder_lbl.setText(f"Est. Schroeder: ~{fs:.0f} Hz")
+
+    def _update_flat_field_warning(self, *_):
+        """Warn only when EVERY axis is fully absorptive (both walls of each
+        pair at R=0). ``physics.calc_shape()`` collapses to a spatial constant
+        on an axis whose averaged R is 0; if that happens on all three axes at
+        once, the 3D field has no spatial structure left and the view goes
+        silently blank (see SESSION_HANDOFF.md 2.6). A single wall at R=0 --
+        used deliberately to inspect that one wall's first-order reflection in
+        isolation -- leaves the other two axes intact and must NOT trigger
+        this warning.
+
+        Cheap pure arithmetic (mirrors _update_schroeder_display), so it is
+        wired to valueChanged and updates live while dragging."""
+        Rx, Ry, Rz = self._wall_reflection()
+        eps = 1e-9
+        if abs(Rx) < eps and abs(Ry) < eps and abs(Rz) < eps:
+            self.flat_field_lbl.setText(
+                "⚠ All walls fully absorptive (R=0) — field has no spatial structure"
+            )
+        else:
+            self.flat_field_lbl.setText("")
 
     # ------------------------------------------------------------------
     # CONTROLLER: 3D pressure field
@@ -860,6 +882,11 @@ class MainWindow(QMainWindow):
         for slider in self.wall_sliders.values():
             slider.valueChanged.connect(self._update_schroeder_display)
 
+        # Flat-field warning: depends only on the wall sliders (room dims
+        # don't affect Rx/Ry/Rz), so wire just those, live on drag.
+        for slider in self.wall_sliders.values():
+            slider.valueChanged.connect(self._update_flat_field_warning)
+
         # Advanced-acoustics: room_scatter feeds calc_tensor_space (geometry
         # change -> invalidates calibration); listening_area only affects the
         # 1D response curve and never reaches the 3D field (display-only).
@@ -1037,6 +1064,14 @@ class MainWindow(QMainWindow):
             self.wall_sliders[a] = sa
             self.wall_sliders[b] = sb
         lay.addWidget(wall_box)
+
+        # Shown only when Rx == Ry == Rz == 0 (every axis fully absorptive);
+        # see _update_flat_field_warning for why a single wall at 0 is fine.
+        self.flat_field_lbl = QLabel("")
+        self.flat_field_lbl.setFont(mono(9))
+        self.flat_field_lbl.setStyleSheet("color: #e6a23c;")
+        self.flat_field_lbl.setWordWrap(True)
+        lay.addWidget(self.flat_field_lbl)
 
         # --- Advanced acoustics --------------------------------------
         # Two continuous sliders feeding the physics engine:
