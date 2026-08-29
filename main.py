@@ -36,6 +36,7 @@ from PySide6.QtWidgets import (
 import config as app_config
 import constants
 import csv_io
+import hazard
 import physics
 
 # View layer (3D + 2D)
@@ -145,6 +146,12 @@ class MainWindow(QMainWindow):
         self._calib_db_range = 20.0
         self._calib_accurate = False
         self._calib_worker = None
+
+        # Modal Collision Hazard overlay cache. Keyed on the room dimensions,
+        # the six wall reflection coefficients and the selected model -- the
+        # metric's entire dependency set. See _hazard_result().
+        self._hazard_key = None
+        self._hazard_cache = None
 
         central = QWidget()
         self.setCentralWidget(central)
@@ -390,6 +397,62 @@ class MainWindow(QMainWindow):
             self.flat_field_lbl.setText("")
 
     # ------------------------------------------------------------------
+    # CONTROLLER: Modal Collision Hazard overlay
+    # ------------------------------------------------------------------
+    def _hazard_mode(self):
+        """The selected hazard model token (``constants.HazardMode``)."""
+        return self.hazard_combo.currentData()
+
+    def _hazard_result(self):
+        """The hazard overlay for the current room, or None when it is Off.
+
+        This is a THIRD recompute category, strictly narrower than the two the
+        rest of the app uses (see SESSION_HANDOFF.md 2.5). The metric depends on
+        the room dimensions, the six wall reflection coefficients and the
+        selected model -- and on nothing else. It is independent of speaker and
+        mic position, source count, phase mode, listening area, Room Scatter
+        (pinned at 0.30 inside hazard.py) and the current frequency.
+
+        So it is memoized on exactly that dependency set: moving the mic, which
+        fires a full _refresh(), must cost zero hazard computation.
+
+        The key holds the six wall values individually, NOT the three axis means
+        Rx/Ry/Rz. The means do not determine f_s: absorption is per-wall
+        ``1 - r^2``, so walls of (1.0, 0.6) and (0.8, 0.8) share a mean of 0.8
+        but have different total absorption and therefore different Schroeder
+        frequencies. Keying on the means would serve a stale curve for that
+        edit.
+        """
+        mode = self._hazard_mode()
+        if mode == constants.HazardMode.OFF:
+            return None
+
+        walls = {name: s.value() for name, s in self.wall_sliders.items()}
+        key = (self.room.x.value(), self.room.y.value(), self.room.z.value(),
+               tuple(walls[name] for name in constants.WALL_NAMES), mode)
+        if key != self._hazard_key:
+            Rx, Ry, Rz = self._wall_reflection()
+            self._hazard_key = key
+            self._hazard_cache = hazard.compute(
+                mode, self.room.x.value(), self.room.y.value(), self.room.z.value(),
+                walls, Rx, Ry, Rz,
+            )
+        return self._hazard_cache
+
+    def _on_hazard_mode_changed(self, *_):
+        """The overlay selector is display-only: it cannot change the 3D field
+        or the 1D response curve, only what is drawn on top of the latter.
+
+        It still goes through the shared display-only path rather than a bespoke
+        redraw, because update_freq_response() draws the response and the
+        overlay in one pass -- a separate path would have to duplicate that, and
+        the response recompute is the same one 'Show room modes' already pays
+        for. The cache is dropped first because the model is part of its key."""
+        self._hazard_key = None
+        self._hazard_cache = None
+        self._on_display_param_committed()
+
+    # ------------------------------------------------------------------
     # CONTROLLER: 3D pressure field
     # ------------------------------------------------------------------
     def _wall_reflection(self):
@@ -481,6 +544,7 @@ class MainWindow(QMainWindow):
             listening_area=listening_area,
             room_scatter=room_scatter,
             mode_freqs=mode_freqs,
+            hazard=self._hazard_result() if recompute_response else None,
         )
 
     # ---- Frequency slider --------------------------------------------
@@ -905,6 +969,10 @@ class MainWindow(QMainWindow):
         # plot; it does not affect the 3D field -> display-only handler.
         self.show_modes_chk.toggled.connect(self._on_display_param_committed)
 
+        # Hazard overlay selector: display-only, but it invalidates its own
+        # cache first (the selected model is part of the cache key).
+        self.hazard_combo.currentIndexChanged.connect(self._on_hazard_mode_changed)
+
         # Full-band scaling: toggle switches normalization mode immediately;
         # Calibrate launches the accurate background sweep.
         self.fullband_chk.toggled.connect(self._on_fullband_toggled)
@@ -957,6 +1025,24 @@ class MainWindow(QMainWindow):
         self.show_modes_chk = QCheckBox("Show room modes")
         self.show_modes_chk.setFont(mono(9, bold=True))
         smooth_row.addWidget(self.show_modes_chk)
+
+        # Modal Collision Hazard overlay selector -- same conceptual group as
+        # "Show room modes" (both are analysis overlays on the 2D plot). One
+        # combo rather than three radio buttons: the three states are mutually
+        # exclusive and two of them are competing MODELS, not intensities.
+        # Defaults to Off, so v1.3.1 behaviour is unchanged until opted into.
+        hazard_lbl = QLabel("Hazard overlay:")
+        hazard_lbl.setFont(mono(9, bold=True))
+        smooth_row.addWidget(hazard_lbl)
+        self.hazard_combo = QComboBox()
+        self.hazard_combo.setFont(mono(9))
+        # Item data carries the constants.HazardMode token, so the visible
+        # labels can be reworded without touching the dispatch in hazard.py.
+        self.hazard_combo.addItem("Off", constants.HazardMode.OFF)
+        self.hazard_combo.addItem("Original", constants.HazardMode.ORIGINAL)
+        self.hazard_combo.addItem("v5", constants.HazardMode.V5)
+        smooth_row.addWidget(self.hazard_combo)
+
         top_lay.addLayout(smooth_row)
 
         lay.addWidget(top_section)
