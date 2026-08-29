@@ -2,6 +2,111 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.4.0] - 2026-08-29
+
+### Added: Modal Collision Hazard Overlay (2D Frequency Response)
+
+A new **Hazard overlay** selector — **Off / Original / v5** — sits next to the
+"Show room modes" checkbox and draws a density backdrop behind the frequency-
+response curve. It ports the Modal Collision Hazard Map (MCFD) metric from a
+separate acoustics research project. Default is **Off**, so v1.3.1 behaviour is
+unchanged until the feature is opted into.
+
+#### What the metric measures
+
+A rectangular room's eigenmodes are enumerated from the classic formula. When
+two modes land at nearly the same frequency they "collide" — their energy piles
+up at one spot in the spectrum instead of being spread across it. The hazard
+density curve `D(f)` scores, for every frequency, how much pairwise collision is
+happening there; each colliding pair contributes a Gaussian bump centred on the
+pair's midpoint frequency.
+
+#### What it is NOT
+
+`D(f)` is a property of the **room geometry and wall absorption alone**. It does
+not depend on speaker position, mic position, source count or phase-correction
+mode. Its peaks therefore do **not** correspond to dips in the frequency-
+response curve, and are not supposed to: the response curve describes one
+specific listening position, while the hazard curve describes the room's
+intrinsic disposition. The overlay earns its place precisely because the two
+curves can be compared and **disagree**.
+
+The overlay is styled as a wash sitting behind everything (fill α=0.22, z-order
+below the mode guide lines, the response curve and the red marker) so it reads
+as a backdrop rather than as a second foreground curve inviting a point-by-point
+comparison. No UI text claims the peaks predict dips.
+
+**Known blind spot** (verified against a real room, Aug 2026): two close modes
+sharing the same *z*-dependence produce a position-dependent null that this
+frequency-domain metric cannot see at all.
+
+#### Two models, both kept
+
+| Model | Mode set | Weighting | Score |
+|---|---|---|---|
+| **Original** | fixed 29 modes by index cap (9 axial, 12 tangential, 8 oblique) | class weight only (1.0 / 0.5 / 0.25); constant σ = 3.0 Hz | `S_orig`, **not** divided by N |
+| **v5** | frequency-driven, enumerated to 3·f_s | direction-cosine axis weight × γ order penalty × Schroeder roll-off; σ(f) narrows as 1/f | `S_v5`, divided by N |
+
+"Original" is deliberately naive and is **not** superseded — it tracks perceived
+room quality better in small rooms. "v5" is the extension that handles large
+rooms. **Their scalar scores are not comparable to each other** (different
+weighting, and only v5 divides by the mode count), so the on-plot read-out
+always prefixes the model name.
+
+#### Parameter coupling — what tracks the UI, what is pinned
+
+| Parameter | Source | Why |
+|---|---|---|
+| `Lx, Ly, Lz` | **UI (live)** | — |
+| `f_s`, feeding the roll-off `r(f)` | **UI (live)** — `physics.schroeder_frequency()` with the six per-wall slider values | SWV's Schroeder formula is algebraically identical to the research one (V cancels). All six walls at R=0.80 reproduces the research's α=0.36 exactly. Live coupling makes the core v5 insight visible: absorption moves the band where modal analysis applies |
+| `Rx, Ry, Rz` in γ | **UI (live)** — per-axis mean of the opposing wall pair (`_wall_reflection()`) | Same damping model as `calc_gamma` |
+| scatter `s` in γ | **PINNED at 0.30** — the Room Scatter slider is ignored | The slider defaults to 0.0. Reading it would silently delete the order penalty in the default state and make every score incomparable with the research data |
+| `p=1.5`, `q=1.0`, `k=1.0`, `σ_ref=3.0`, `f_ref=100` | **PINNED** | Calibrated; deliberately not exposed in Settings |
+
+Degenerate rooms are guarded: a fully reflective room (all six walls at R=1.0)
+makes `schroeder_frequency()` return 0.0, and the roll-off would divide by zero.
+The metric returns an empty result and the view renders nothing — no NaN, no
+inf, no exception. The resulting plot is byte-identical to the Off state.
+
+#### Recompute behaviour
+
+The hazard is a **third** recompute category, strictly narrower than the two the
+app already had. It depends only on the room dimensions, the six wall
+reflection coefficients and the selected model, and is memoized on exactly that
+set — moving the mic costs zero hazard computation, and the cheap
+frequency-marker path never touches the overlay artists. Nothing is added to the
+CSV: dimensions and wall coefficients already round-trip, and the hazard is
+derived, never stored.
+
+Measured cost of a full v5 recompute (curve + score) for a 6.0 × 5.0 × 2.4 m
+room — 518 modes, ~134 000 pairs — is **4.7 ms**.
+
+---
+
+### Changed: 2D Panel Width Rebalance (1:1 → 4:6)
+
+The frequency response is the panel that rewards width; the top-down view is
+letterboxed by `set_aspect("equal")` regardless, so half the figure was being
+spent on margin. The response gains ~20 % width and the top-down slot becomes
+near-square. Two `add_subplot(1, 2, n)` calls plus a separate
+`subplots_adjust()` are replaced by a single `add_gridspec()` carrying both the
+split and the margins, so the margin numbers live in exactly one place.
+`figsize` goes 3.2 → 3.4 in for annotation headroom; the room outline keeps its
+true proportions throughout.
+
+The right margin also moved 0.97 → 0.93 to make room for the hazard axis's tick
+labels and rotated ylabel, which at 0.97 were drawn off the canvas. It is held
+constant across both overlay states so the response curve never shifts sideways
+when the overlay is toggled.
+
+**Files changed:** `hazard.py` (new — the metric, pure NumPy, no Qt/Matplotlib).
+`constants.py` (new `HazardMode` tokens). `graphs.py` (gridspec rebalance,
+`ax_hazard` twin created once in `__init__`, `_restack()` / `_draw_hazard()` /
+`_hide_hazard()`, `hazard=` threaded through `update_all` →
+`update_freq_response`). `main.py` (`hazard_combo`, `_hazard_mode()`,
+`_hazard_result()` with memoization, `_on_hazard_mode_changed()`, signal
+wiring). `physics.py`, `render.py` and the 3D pipeline unchanged.
+
 ## [1.3.1] - 2026-08-12
 
 ### Added: Flat-Field Warning (Wall Reflection Coefficients)

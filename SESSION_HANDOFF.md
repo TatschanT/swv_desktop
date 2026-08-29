@@ -1,6 +1,6 @@
 # Standing Wave Viewer — Session Handoff Document
-**Date:** 2026-08-12  
-**Status:** **V1.3.1 STABLE** ✅ — Flat-field warning (wall reflections) + keyboard/wheel commit debounce (position/wall sliders) complete. Session closed.  
+**Date:** 2026-08-29  
+**Status:** **V1.4.0** ✅ — Modal Collision Hazard overlay (2D frequency response) + 4:6 panel rebalance complete. Metric and 2D plot verified headlessly; **3D view not exercised (needs a real display)**.  
 **Project:** `swv_desktop` (`/home/ttatsuta/Projects/swv_desktop`)  
 **Venv:** `.venv/` (Python 3.14, PySide6 6.11, PyVista 0.48, pyvistaqt 0.11, Matplotlib 3.10, NumPy 2.4)
 
@@ -75,6 +75,16 @@
 |--------------|-------------|
 | Flat-field warning | New label under "Wall reflection coefficients" reads "⚠ All walls fully absorptive (R=0) — field has no spatial structure" only when `Rx == Ry == Rz == 0` simultaneously; a single wall at R=0 (inspecting that wall's first-order reflection) does NOT trigger it |
 | Keyboard/wheel commit debounce | `LabeledSlider` now fires `committed` for keyboard (arrow/Page/Home/End) and mouse-wheel changes too, via a 150 ms single-shot debounce gated on `QSlider.isSliderDown()`; mouse-drag commit-on-release is untouched (zero added cost) |
+
+### V1.4.0 (Modal Collision Hazard overlay + 2D panel rebalance)
+
+| Feature / Change | Deliverable |
+|------------------|-------------|
+| `hazard.py` (new) | Pure-NumPy MCFD metric, no Qt/Matplotlib. Two models: "Original" (fixed 29-mode set, constant σ=3 Hz, score NOT divided by N) and "v5" (direction-cosine axis weight, γ order penalty, Schroeder roll-off, σ(f)∝1/f, score divided by N). Scores are NOT comparable between models |
+| Hazard overlay UI | 3-way `QComboBox` (Off / Original / v5) beside "Show room modes"; default Off, so V1.3.1 behaviour is unchanged until opted into |
+| Overlay drawing | Amber density backdrop on a `twinx()` sibling of `ax_freq`, created ONCE in `__init__` (see 2.12); peak-normalised in the view, raw in the metric; z-order below the mode lines, response curve and marker |
+| Third recompute category | Hazard depends ONLY on room dims + the six wall sliders + the model; memoized on exactly that key, so moving the mic costs zero hazard computation (see 2.5) |
+| 2D panel rebalance | Width ratio 1:1 → 4:6 and `figsize` 3.2 → 3.4 in, via a single `add_gridspec()` carrying both the split and the margins; right margin 0.97 → 0.93 to fit the hazard axis label |
 
 ### V1.2.2 (Full-band scaling — accurate mode normalization overhaul)
 
@@ -184,6 +194,27 @@ The 1D frequency response curve is **independent of the current frequency** (it 
 - Room / speaker / mic / wall / source / phase / room_scatter changes DO require a recompute.
 - `listening_area` and `show_modes_chk` ALSO trigger `recompute_response=True` (the 1D curve changes), but they do NOT invalidate the Full-band calibration cache.
 
+**Third category (V1.4.0) — the Modal Collision Hazard overlay.** Strictly
+narrower than both of the above:
+
+| | Depends on | Does NOT depend on |
+|---|---|---|
+| `hazard.compute()` | `Lx`, `Ly`, `Lz`, the six wall reflection sliders, the selected model | speaker/mic position, `num_src`, `corr_mode`, `listening_area`, Room Scatter (pinned at 0.30 inside `hazard.py`), the current frequency |
+
+Memoized in `MainWindow._hazard_result()` on exactly that dependency set, so
+moving the mic — which still fires a full `_refresh(recompute_response=True)` —
+costs **zero** hazard computation. The cache is dropped in
+`_on_hazard_mode_changed()` because the model is part of the key.
+
+**The key holds the six wall values individually, NOT `Rx`/`Ry`/`Rz`.** The
+axis means do not determine `f_s`: absorption is per-wall `1 - r²`, so walls of
+`(1.0, 0.6)` and `(0.8, 0.8)` share a mean of `0.8` but have different total
+absorption and therefore different Schroeder frequencies (verified: `f_s` moves
+184.6 → 187.1 Hz across that edit while `Rx` stays at 0.80). A mean-keyed cache
+would serve a stale curve for it.
+
+The cheap `update_freq_marker()` path must never touch the hazard artists.
+
 ### 2.6 Reflection Coefficients
 
 `RoomConfig.Rx/Ry/Rz` must not be zero — when `R=0`, `calc_shape(n, pos, L, 0)` collapses to a spatial constant, rendering the volume pressure field flat (invisible). Correct derivation:
@@ -266,6 +297,60 @@ In `physics.py`, mode amplitude is weighted by mode type (Axial / Tangential / O
 | Full-band ON, accurate cache | "Calibrated ✓" | No |
 | Sweep running | "Calculating..." | No |
 
+### 2.12 Matplotlib `twinx()` — Create-Once Rule (V1.4.0)
+
+**Rule:** `self.ax_hazard = self.ax_freq.twinx()` is called **exactly once**, in
+`Plot2DWidget.__init__`. Never inside an update method.
+
+**Why:** each `twinx()` call constructs a **new** `Axes` and registers it on the
+figure. In a long-lived Qt app, calling it per redraw accumulates sibling axes
+for the lifetime of the process — the 2D analogue of §2.2's "never call
+`plotter.clear()`".
+
+**The trap:** `update_freq_response()` starts with `ax.clear()`, which does
+**not** remove a twin sibling. The twin survives, so it must be cleared
+explicitly (`_hide_hazard()` / the `clear()` at the top of `_draw_hazard()`).
+Deleting and recreating it instead would reintroduce the leak.
+
+**Three things `Axes.clear()` resets that must be re-applied on every redraw**
+(all three were found by rendering the figure headlessly, not by reading docs):
+
+| Reset by `clear()` | Symptom if not re-applied | Re-applied in |
+|---|---|---|
+| `ax_freq`'s background patch → visible | The opaque patch hides the hazard fill beneath it — overlay looks like it never drew | `_restack()` |
+| A twin's y-axis → back to the **left** side | The hazard label and ticks land across the middle of the response plot | `_draw_hazard()` |
+| All artist styling on the twin | Default light-theme ticks on the dark palette | `_draw_hazard()` |
+
+**Cross-axes stacking:** Matplotlib draws whole `Axes` in z-order, so artist
+z-order cannot mix across the two. The backdrop has to *be* the axes that draws
+first: `ax_hazard.set_zorder(0)`, `ax_freq.set_zorder(1)`, and `ax_freq`'s patch
+made invisible so the fill shows through. Losing that patch is invisible in
+practice — the figure behind it is already `BG`.
+
+**Layout margins:** the gridspec's `right` is `0.93`, not `0.97`. The hazard
+axis needs ~0.3 in for its tick labels and rotated ylabel; at `0.97` the label
+was drawn off the canvas entirely. It is held constant across both overlay
+states so the response curve never shifts sideways when the overlay is toggled.
+
+### 2.13 Hazard Metric — Pinned vs. Live Parameters (V1.4.0)
+
+`hazard.py` is a **pure-NumPy sibling** of `physics.py`: it imports `physics`
+(for `schroeder_frequency` only) but never writes to it, and imports no Qt or
+Matplotlib. Every constant in its "pinned" block was calibrated against research
+data and **must not be re-tuned** — see the CHANGELOG `[1.4.0]` coupling table
+for the full list and the reasoning.
+
+The one that will look like a bug and is not: **the scatter term `s` is pinned
+at 0.30 and deliberately ignores the Room Scatter slider.** That slider defaults
+to `0.0`, so reading it would silently delete the γ order penalty in the default
+state and make every score incomparable with the research set. `hazard.compute()`
+has no scatter parameter at all, so the slider cannot leak in.
+
+`S_orig` and `S_v5` are **not comparable to each other** (different weighting,
+and only v5 divides by N). Never render them side by side without the model name
+attached.
+
+
 ---
 
 ## 3. Codebase Structure (MVC)
@@ -303,6 +388,7 @@ swv_desktop/
 │
 ├── constants.py    # Shared literals (extracted V1.3.0)
 │                   #   CorrMode — phase-correction token strings
+│                   #   HazardMode — off/original/v5 tokens (V1.4.0)
 │                   #   SPK_COLOR, MIC_COLOR — equipment marker colors
 │                   #   WALL_* — wall identifier strings (6 constants)
 │                   #   WALL_PAIRS, WALL_NAMES — axis-paired and flat tuples
@@ -326,6 +412,21 @@ swv_desktop/
 │                   #   _freqs, _db — cached for Full-band approx-mode reference
 │                   #   Room-mode guide lines (mode_freqs kwarg)
 │                   #   rebuild_freqs() — config-driven frequency axis
+│                   #   ax_hazard — twinx() sibling, created ONCE (V1.4.0, 2.12)
+│                   #   _restack() / _draw_hazard() / _hide_hazard()
+│                   #   add_gridspec 4:6 split + margins (V1.4.0)
+│
+├── hazard.py       # Model — Modal Collision Hazard density (V1.4.0)
+│                   #   Pure NumPy; no Qt, no Matplotlib
+│                   #   compute(mode, lx, ly, lz, walls, rx, ry, rz)
+│                   #     -> HazardResult(f_grid, curve, peak_value,
+│                   #        peak_freq, score, f_s, mode)
+│                   #   _enumerate_modes()   — vectorised, freq-capped
+│                   #   _enumerate_original()— the fixed 29-mode set
+│                   #   _axis_weight(), _order_weight(), _rolloff(), _sigma()
+│                   #   _pair_score(), _pair_curve() — chunked accumulation
+│                   #   PINNED calibrated constants (incl. SCATTER = 0.30,
+│                   #     deliberately NOT the Room Scatter slider — see 2.13)
 │
 ├── settings_ui.py  # View + state — runtime settings dialog
 │                   #   SettingsDialog(QDialog); exposes a curated subset
@@ -617,29 +718,55 @@ nice-to-haves list below if this ever needs closing fully.
 
 ## 16. Next Session Roadmap
 
-No features are currently planned. Outstanding nice-to-haves from prior sessions:
+### V1.4.x follow-ups — pending validation, NOT to be implemented yet
 
----
+Both are agreed in principle but blocked on validation against the research
+data. Do not start either without a fresh brief.
 
-**All V1.3.0 and V1.3.1 work is complete.** See sections 13–15 above for full implementation detail.
+| Follow-up | What it is | Why it is blocked |
+|---|---|---|
+| **"Both" hazard mode** | A fourth selector state drawing Original and v5 simultaneously in two colours | Needs a presentation that does not invite comparing the two scores, which are not comparable (see 2.13). The single-curve peak normalisation also has to be rethought for two curves |
+| **Scale-invariant normalisation** | Normalise `D(f)` against the Weyl-law *expected* hazard density instead of the curve's own peak, letting the right axis become **absolute** rather than peak-relative | Needs validation that the Weyl expectation matches the measured baseline across room sizes. Until then peak-normalisation stands — it answers "where is this room weak", which is the honest question for the current curve |
 
----
+### Outstanding nice-to-haves (no commitment)
 
-## 17. Session Conclusion
-
-**V1.3.1 is a stable milestone** built on top of the feature-complete V1.3.0.
-Two UX gaps surfaced through real usage — a silently blank 3D view when
-every wall is fully absorptive, and slider changes made via keyboard/wheel
-never reaching the 2D/3D views while Dynamic update is OFF — are both fixed
-and verified interactively.
-
-**This session is officially closed.** The next session should:
-1. Read this document and `CHANGELOG.md` first.
-2. No features are currently queued — pick from the nice-to-haves below or a new brief.
-
-**Outstanding nice-to-haves (no commitment):**
 - `SMOOTHING_SAMPLES` re-exposed in Settings under a clearer name (`LISTENING_AREA_SAMPLES`).
 - Windows `.exe` packaging: PyInstaller `.spec` file.
 - Per-mode scalar bar, contour opacity slider, export of the 3D field to VTK/VTI format, mode labels on the guide lines.
 - The `calib_db_range` asymmetry may need further tuning — the current implementation clips the ratio upper bound at `1.0`, making the upper dB window effectively 0 dB (values above the median all map to 0.5). A `10.0` clip would give a true +20 dB upper window if that proves preferable.
 - `LabeledSlider.setMaxValue()` / `setMinValue()` clamp notifications still bypass the V1.3.1 commit-debounce (see Fix B's residual-gap note in section 15) — low priority since the room-dimension slider's own release already self-corrects it.
+
+### Open question raised by V1.4.0 (needs the author's call)
+
+`physics.schroeder_frequency()` **decreases** as absorption rises (more
+absorption → shorter RT60 → lower `f_s`), which is the textbook behaviour and
+matches SWV's own formula. The V1.4.0 brief predicted the opposite direction
+("more absorption raises `f_s` and widens the band where modal analysis
+applies"). The implementation follows the existing formula unchanged and
+`physics.py` was not touched. **If the research model genuinely expects the
+other direction, the two projects disagree about `f_s` and the v5 roll-off
+inherits that disagreement** — worth reconciling before the scale-invariant
+normalisation work above.
+
+---
+
+## 17. Session Conclusion
+
+**V1.4.0** adds the Modal Collision Hazard overlay on top of the stable V1.3.1.
+A new pure-NumPy `hazard.py` computes the MCFD metric in two models (Original
+and v5); `graphs.py` draws it as a backdrop on a `twinx()` sibling and
+rebalances the two 2D panels 1:1 → 4:6; `main.py` adds the selector and
+memoizes the result on the metric's exact dependency set. `physics.py`,
+`render.py` and the 3D pipeline are untouched.
+
+The metric was verified headlessly (research agreement, live wall coupling,
+pinned scatter, degenerate-room guard, 4.7 ms performance, memoization) and the
+2D plot was verified by rendering it to PNG through Qt's offscreen platform.
+**The 3D view still requires a real display and was not exercised.**
+
+**The next session should:**
+1. Read this document and `CHANGELOG.md` first.
+2. Note the open question about `f_s` direction in section 16 — it is the one
+   thing in V1.4.0 that may be a genuine cross-project disagreement rather than
+   a bug.
+3. Do NOT start either V1.4.x follow-up without a fresh brief.
