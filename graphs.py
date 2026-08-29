@@ -38,14 +38,25 @@ class Plot2DWidget(FigureCanvasQTAgg):
     """Two side-by-side Matplotlib plots embedded in the PySide6 layout."""
 
     def __init__(self, parent=None):
-        self.fig = Figure(figsize=(9, 3.2), facecolor=BG)
+        self.fig = Figure(figsize=(9, 3.4), facecolor=BG)
         super().__init__(self.fig)
         if parent is not None:
             self.setParent(parent)
 
-        self.ax_top = self.fig.add_subplot(1, 2, 1)
-        self.ax_freq = self.fig.add_subplot(1, 2, 2)
-        self.fig.subplots_adjust(left=0.07, right=0.97, top=0.88, bottom=0.16, wspace=0.28)
+        # One gridspec carrying BOTH the width split and the margins, so there
+        # is no second place holding the same numbers (this replaced a pair of
+        # add_subplot(1, 2, n) calls plus a separate subplots_adjust).
+        #
+        # 4:6 rather than 1:1 -- the frequency response is the panel that
+        # actually rewards width (it gained ~20 %), while the top-down view is
+        # letterboxed by set_aspect("equal") anyway, so a squarer slot wastes
+        # less. The room outline keeps its true proportions either way.
+        gs = self.fig.add_gridspec(
+            1, 2, width_ratios=[4, 6],
+            left=0.07, right=0.97, top=0.88, bottom=0.16, wspace=0.28,
+        )
+        self.ax_top = self.fig.add_subplot(gs[0, 0])
+        self.ax_freq = self.fig.add_subplot(gs[0, 1])
 
         # Frequency sample axis, derived from config so the Settings dialog can
         # change it. Precomputed and reused on every recompute until rebuilt.
