@@ -58,15 +58,58 @@ always prefixes the model name.
 | Parameter | Source | Why |
 |---|---|---|
 | `Lx, Ly, Lz` | **UI (live)** | — |
-| `f_s`, feeding the roll-off `r(f)` | **UI (live)** — `physics.schroeder_frequency()` with the six per-wall slider values | SWV's Schroeder formula is algebraically identical to the research one (V cancels). All six walls at R=0.80 reproduces the research's α=0.36 exactly. Live coupling makes the core v5 insight visible: absorption moves the band where modal analysis applies |
-| `Rx, Ry, Rz` in γ | **UI (live)** — per-axis mean of the opposing wall pair (`_wall_reflection()`) | Same damping model as `calc_gamma` |
+| `f_s`, feeding the roll-off `r(f)` | **UI (live)** — `physics.schroeder_frequency()` with the six per-wall slider values | SWV's Schroeder formula is algebraically identical to the research one (V cancels). All six walls at R=0.80 reproduces the research's α=0.36 exactly. Live coupling makes the core v5 insight visible: **more absorption raises total absorption A, shortens RT60 and widens each mode's bandwidth, so modal overlap `M(f) = 3(f/f_s)²` reaches 3 at a lower frequency — `f_s` falls and the modal region NARROWS.** The v5 roll-off inherits this correctly: the hazard tail retracts as absorption is added |
+| `R_eff` in γ (`Rx, Ry, Rz`) | **UI (live)** — per-axis mean of the opposing wall pair (`_wall_reflection()`) | Same damping model as `calc_gamma` |
+| `GAMMA_MIN` (γ's numerator) | **PINNED at 11.3**, evaluated once at `GAMMA_REF_R = 0.80` | Recomputing it from live reflections renormalizes every room so its own least-damped mode scores exactly 1.0, discarding the absolute damping level — and **inverts** how the score responds to absorption (see below) |
 | scatter `s` in γ | **PINNED at 0.30** — the Room Scatter slider is ignored | The slider defaults to 0.0. Reading it would silently delete the order penalty in the default state and make every score incomparable with the research data |
 | `p=1.5`, `q=1.0`, `k=1.0`, `σ_ref=3.0`, `f_ref=100` | **PINNED** | Calibrated; deliberately not exposed in Settings |
 
-Degenerate rooms are guarded: a fully reflective room (all six walls at R=1.0)
-makes `schroeder_frequency()` return 0.0, and the roll-off would divide by zero.
-The metric returns an empty result and the view renders nothing — no NaN, no
-inf, no exception. The resulting plot is byte-identical to the Off state.
+`GAMMA_MIN` is the subtle one. Derived live, it makes `w_order = 1.0` for each
+room's own least-damped mode; as absorption rises the constant
+`GAMMA_SCALE·(1 − R_eff)` term comes to dominate γ, the relative spread across
+mode orders collapses, high-order modes stop being penalized, more modes carry
+weight — and the score gets *worse* while the roll-off tail correctly retracts.
+The overlay would contradict itself: the curve says "better", the number says
+"worse". Pinned, both agree. Note this does **not** change how rooms rank
+against each other — `GAMMA_MIN` depends only on `R`, never on geometry, so at
+any fixed wall setting the two variants differ by a global scalar and produce
+identical orderings. Only the cross-absorption behaviour changes.
+
+Measured `S_v5` for 4.42 × 3.34 × 2.40 m as absorption is swept:
+
+| all six walls at R | 0.95 | 0.90 | 0.80 | 0.70 | 0.60 | 0.40 |
+|---|---|---|---|---|---|---|
+| `f_s` (Hz) | 314.5 | 225.3 | 163.7 | 137.5 | 122.8 | 107.2 |
+| `S_v5` | 0.010601 | 0.010484 | 0.006904 | 0.004414 | 0.002957 | 0.001465 |
+
+`w_order` exceeds 1.0 for rooms more reflective than the reference (2.13 for the
+fundamental at R=0.95). That is expected and correct — it means "less damped
+than the reference room" — and is deliberately **not** clamped; the curve is
+peak-normalized downstream, so nothing overflows.
+
+Degenerate rooms are guarded, but **only where the guard is justified**. A fully
+reflective room (all six walls at R=1.0) makes `schroeder_frequency()` return
+0.0, and v5's roll-off would divide by zero — so **v5** returns an empty result
+and renders nothing, a plot byte-identical to the Off state. **Original** has no
+such dependency and renders normally there, showing `f_s —` in its read-out
+(matching the existing `Est. Schroeder: —` convention). Non-positive room
+dimensions guard both models. No NaN, no inf, no exception in any case.
+
+Relatedly: **the six wall sliders are inert while Original is selected, and that
+is correct behaviour, not a bug.** Original's mode set is fixed by index caps,
+its collision width is constant, and it has no roll-off and no order penalty, so
+nothing in it reads `Rx/Ry/Rz` or `f_s` — it is a statement about room
+proportions alone. Feeding absorption into it would just make it v5 with fewer
+modes.
+
+The Original weights (1.0 / 0.5 / 0.25) coinciding with `physics.MODAL_NORMS` is
+not numerology. The wave equation's modal normalization constant is
+`Λ = (1/2)^(number of non-zero indices)` — 1/2 axial, 1/4 tangential, 1/8
+oblique, i.e. ratios 1 : 0.5 : 0.25 exactly. The naive model was implicitly
+weighting each mode by the energy it holds, which is a real physical
+justification for weights that otherwise look arbitrary, and explains why it
+holds up in small rooms: there neither the roll-off nor the order penalty bites,
+so energy weighting is the whole story.
 
 #### Recompute behaviour
 

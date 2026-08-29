@@ -80,7 +80,7 @@
 
 | Feature / Change | Deliverable |
 |------------------|-------------|
-| `hazard.py` (new) | Pure-NumPy MCFD metric, no Qt/Matplotlib. Two models: "Original" (fixed 29-mode set, constant σ=3 Hz, score NOT divided by N) and "v5" (direction-cosine axis weight, γ order penalty, Schroeder roll-off, σ(f)∝1/f, score divided by N). Scores are NOT comparable between models |
+| `hazard.py` (new) | Pure-NumPy MCFD metric, no Qt/Matplotlib. Two models: "Original" (fixed 29-mode set, constant σ=3 Hz, score NOT divided by N, independent of wall absorption entirely) and "v5" (direction-cosine axis weight, γ order penalty with PINNED `GAMMA_MIN`, Schroeder roll-off, σ(f)∝1/f, score divided by N). Scores are NOT comparable between models. **Verified numerically exact against the research code** |
 | Hazard overlay UI | 3-way `QComboBox` (Off / Original / v5) beside "Show room modes"; default Off, so V1.3.1 behaviour is unchanged until opted into |
 | Overlay drawing | Amber density backdrop on a `twinx()` sibling of `ax_freq`, created ONCE in `__init__` (see 2.12); peak-normalised in the view, raw in the metric; z-order below the mode lines, response curve and marker |
 | Third recompute category | Hazard depends ONLY on room dims + the six wall sliders + the model; memoized on exactly that key, so moving the mic costs zero hazard computation (see 2.5) |
@@ -340,6 +340,28 @@ Matplotlib. Every constant in its "pinned" block was calibrated against research
 data and **must not be re-tuned** — see the CHANGELOG `[1.4.0]` coupling table
 for the full list and the reasoning.
 
+**The Schroeder frequency falls as absorption rises — this is correct and both
+projects agree on it.** More absorption raises total absorption `A`, shortens
+`RT60`, and widens each mode's bandwidth, so modal overlap `M(f) = 3(f/f_s)²`
+reaches 3 at a *lower* frequency: `f_s` falls and the modal region **narrows**.
+The v5 roll-off inherits this correctly — the hazard tail retracts as absorption
+is added. (The V1.4.0 brief stated the opposite direction; that was an error in
+the brief, confirmed and withdrawn by the author. `physics.schroeder_frequency`
+is right and was never modified. Do not "fix" it.)
+
+**`GAMMA_MIN` is pinned at 11.3, evaluated once at `GAMMA_REF_R = 0.80`.** It
+must NOT be recomputed from the live reflections. Doing so renormalizes every
+room so its own least-damped mode scores exactly `w_order = 1.0`, discarding the
+absolute damping level: as absorption rises the constant `GAMMA_SCALE·(1−R_eff)`
+term dominates γ, the spread across mode orders collapses, high-order modes stop
+being penalized, more modes carry weight, and the score gets *worse* while the
+tail correctly retracts — the curve says "better", the number says "worse".
+Only `R_eff` inside `γ(n)` is live. This does not change how rooms **rank**:
+`GAMMA_MIN` depends only on `R`, never on geometry, so at fixed walls the two
+variants differ by a global scalar. `w_order > 1` for rooms more reflective than
+the reference (2.13 for the fundamental at R=0.95) is expected — **do not
+clamp it.**
+
 The one that will look like a bug and is not: **the scatter term `s` is pinned
 at 0.30 and deliberately ignores the Room Scatter slider.** That slider defaults
 to `0.0`, so reading it would silently delete the γ order penalty in the default
@@ -349,6 +371,26 @@ has no scatter parameter at all, so the slider cannot leak in.
 `S_orig` and `S_v5` are **not comparable to each other** (different weighting,
 and only v5 divides by N). Never render them side by side without the model name
 attached.
+
+**The Original model is independent of wall absorption entirely** — fixed
+29-mode set by index cap, constant σ, no roll-off, no order penalty. Nothing in
+it reads `Rx/Ry/Rz` or `f_s`. So:
+
+- The six wall sliders being **inert** while Original is selected is correct
+  behaviour, not a bug. It is a statement about room proportions alone; feeding
+  absorption into it would just make it v5 with fewer modes.
+- The `f_s <= 0` guard is **v5-only**. Original renders normally in a fully
+  reflective room and shows `f_s —` (matching main.py's `Est. Schroeder: —`).
+  The non-positive-dimension guard covers both models.
+
+Its weights (1.0 / 0.5 / 0.25) coinciding with `physics.MODAL_NORMS` is **not
+numerology**: the wave equation's modal normalization constant is
+`Λ = (1/2)^(number of non-zero indices)` — 1/2 axial, 1/4 tangential, 1/8
+oblique, i.e. ratios 1 : 0.5 : 0.25 exactly. The naive model was implicitly
+weighting each mode by the energy it holds. That is the physical justification
+for weights that otherwise look arbitrary, and it explains why the model holds
+up in small rooms: there neither the roll-off nor the order penalty bites, so
+energy weighting is the whole story.
 
 
 ---
@@ -736,17 +778,17 @@ data. Do not start either without a fresh brief.
 - The `calib_db_range` asymmetry may need further tuning — the current implementation clips the ratio upper bound at `1.0`, making the upper dB window effectively 0 dB (values above the median all map to 0.5). A `10.0` clip would give a true +20 dB upper window if that proves preferable.
 - `LabeledSlider.setMaxValue()` / `setMinValue()` clamp notifications still bypass the V1.3.1 commit-debounce (see Fix B's residual-gap note in section 15) — low priority since the room-dimension slider's own release already self-corrects it.
 
-### Open question raised by V1.4.0 (needs the author's call)
+### Watch item — `peak_value` is an in-band maximum (V1.4.0, do not change yet)
 
-`physics.schroeder_frequency()` **decreases** as absorption rises (more
-absorption → shorter RT60 → lower `f_s`), which is the textbook behaviour and
-matches SWV's own formula. The V1.4.0 brief predicted the opposite direction
-("more absorption raises `f_s` and widens the band where modal analysis
-applies"). The implementation follows the existing formula unchanged and
-`physics.py` was not touched. **If the research model genuinely expects the
-other direction, the two projects disagree about `f_s` and the v5 roll-off
-inherits that disagreement** — worth reconciling before the scale-invariant
-normalisation work above.
+`HazardResult.peak_value` is the maximum of `D(f)` over the **displayed
+20–250 Hz band**, not the global maximum of the curve. In a small room with a
+high `f_s` the true peak can sit above 250 Hz, so dragging the room-dimension
+sliders could push the true peak in and out of the window and make the
+peak-normalization factor **jump discontinuously**.
+
+The author is watching for this on the real display. **Leave it as is for now.**
+If it shows up, the fix is one of: relabel the read-out to `peak (in band)`, or
+redefine the normalization explicitly as the in-band maximum.
 
 ---
 
@@ -764,9 +806,18 @@ pinned scatter, degenerate-room guard, 4.7 ms performance, memoization) and the
 2D plot was verified by rendering it to PNG through Qt's offscreen platform.
 **The 3D view still requires a real display and was not exercised.**
 
+The metric was **confirmed numerically exact against the research code** by the
+author — all six reference values to full precision, including the curve peak
+value and its location, which validates the roll-off, `σ(f)` and the chunked
+accumulation, not just the score. Two follow-up fixes then landed: `GAMMA_MIN`
+pinned at its reference value (it had been recomputed live, which inverted how
+the score responds to absorption), and the `f_s` guard narrowed to v5 only.
+
 **The next session should:**
 1. Read this document and `CHANGELOG.md` first.
-2. Note the open question about `f_s` direction in section 16 — it is the one
-   thing in V1.4.0 that may be a genuine cross-project disagreement rather than
-   a bug.
-3. Do NOT start either V1.4.x follow-up without a fresh brief.
+2. Read 2.13 before touching `hazard.py`. Three things in it look like bugs and
+   are not: the pinned scatter term, the pinned `GAMMA_MIN`, and the wall
+   sliders being inert in Original mode.
+3. Note the `peak_value` watch item in section 16 — pending observation on the
+   real display, not to be changed pre-emptively.
+4. Do NOT start either V1.4.x follow-up without a fresh brief.
