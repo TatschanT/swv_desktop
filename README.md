@@ -25,11 +25,13 @@ To bridge the gap between ideal theoretical physics and real-world perception, u
 - **Data Import**: You can import data from a CSV file containing exported sessions.
 - **Live Settings Tuning**: Dynamically adjust simulation resolutions, grid sizes, and the calculation range via the built-in Settings dialog without restarting the application.
 - **Approximate Display of Schroeder Frequency**: The Schroeder frequency is the frequency at which the acoustic characteristics of a room transition from a “region dominated by standing waves” to a “statistically uniform diffuse sound field.” Since the behavior of sound waves within a space changes fundamentally at this frequency, we have chosen to display it as a guideline for the upper limit of the simulation’s scope. In large or dead rooms, this frequency decreases.
+- **NEW in v1.4.0: Hazard Density Plot**: Quantifies modal overlaps and displays at which frequencies strong dips or peaks are likely to occur. This metric originated from the [Modal Collision Hazard Map project] (https://note.com/proudwings/n/nb1b2c2343523?hl=en). You can use the **Hazard Overlay** toggle to select between the “Original” and “V5” calculation methods. We recommend using “Original” for smaller rooms and “V5” for larger rooms. Please note that the vertical axis is normalized to the maximum value for that room, so it does not represent absolute values.
+
 ## 🚀 3D View Controls
 - When **Contour mode** is enabled, the sound pressure distribution display switches to contour mode, providing a clearer view (though the amount of information displayed decreases)
 - When you turn on **Dynamic mode toggle**, the sound pressure distribution follows all parameter adjustments (requires power)
 - **Reset View**: Returns the camera to its initial position.
-- **NEW in v1.2.2** When the **Full-band Scaling** toggle is turned on, the rendering scale is normalized to the distribution across the entire frequency range. Turning the toggle on applies a rough scaling adjustment, but pressing the **Calibration** button calculates the sound pressure distribution across the entire frequency range more precisely and calibrates the scale to a median of -24 dB to +15 dB (this takes a few seconds).
+- When the **Full-band Scaling** toggle is turned on, the rendering scale is normalized to the distribution across the entire frequency range. Turning the toggle on applies a rough scaling adjustment, but pressing the **Calibration** button calculates the sound pressure distribution across the entire frequency range more precisely and calibrates the scale to a median of -24 dB to +15 dB (this may take a few dozen seconds).
 - **Basic Mouse Operations**
   - Moving the mouse while holding down the left mouse button rotates the view.
   - Moving the mouse up or down while holding the right mouse button zooms in or out. Scrolling the mouse wheel also zooms in or out.
