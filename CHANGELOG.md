@@ -126,6 +126,53 @@ room — 518 modes, ~134 000 pairs — is **4.7 ms**.
 
 ---
 
+### Changed: `GAMMA_MIN` Pinned — the v5 Score Changed Meaning
+
+Shipped as a follow-up fix within v1.4.0. **This is not merely a bug fix: it
+changed what `S_v5` means, and scores recorded before it are not comparable to
+scores recorded after it.**
+
+`GAMMA_MIN`, the numerator of the order penalty `w_order = GAMMA_MIN / γ(n)`,
+was being recomputed per room from the live wall reflections. That normalised
+every room against *itself*: its own least-damped mode scored exactly
+`w_order = 1.0` regardless of how absorptive the room actually was, discarding
+the absolute damping level entirely.
+
+It is now a pinned constant — `GAMMA_REF_R = 0.80`, value **11.3** — so the
+score is expressed **relative to a fixed reference room**. `w_order = 1.0` now
+means "as damped as the least-damped mode of the reference room"; `2.13` means
+"half as damped". Values above 1.0 are expected for rooms more reflective than
+the reference and are deliberately not clamped.
+
+**Room-to-room ranking is unaffected.** `GAMMA_MIN` depends only on `R`, never
+on geometry, so at any fixed wall setting the two variants differ by a global
+scalar and order rooms identically (verified: four geometries, identical
+ordering at R=0.80 and R=0.60). What changed is the **cross-absorption**
+behaviour — and it changed from wrong to right. Previously, adding absorption
+made the score *worse* while the roll-off tail correctly retracted, so the
+overlay contradicted itself: the curve said "better", the number said "worse".
+
+Because `GAMMA_REF_R` defines the reference point of the whole score, it is
+**versioning-relevant, not a tuning knob**. Changing it silently invalidates
+every score recorded before the change.
+
+---
+
+### Fixed: `f_s` Guard Narrowed to the v5 Model Only
+
+The `f_s <= 0.0` degenerate-room guard applied to both models. Only v5 divides
+by `f_s` (in the Schroeder roll-off); the Original model reads no wall
+reflections at all, so blanking it in a fully reflective room had no
+justification.
+
+Original now renders normally there, showing `f_s —` in its read-out (matching
+the existing `Est. Schroeder: —` convention). v5 still renders nothing. The
+non-positive-dimension guard still covers both models. Verified: Original's
+R=1.0 curve is bit-identical to its R=0.80 curve, which demonstrates
+independence from wall reflections rather than merely the absence of a crash.
+
+---
+
 ### Changed: 2D Panel Width Rebalance (1:1 → 4:6)
 
 The frequency response is the panel that rewards width; the top-down view is

@@ -362,6 +362,72 @@ variants differ by a global scalar. `w_order > 1` for rooms more reflective than
 the reference (2.13 for the fundamental at R=0.95) is expected — **do not
 clamp it.**
 
+#### What the score actually is (V1.4.0)
+
+`w_order = GAMMA_MIN / γ(n)` is a **dimensionless quantity referenced to the
+reference room**, not a self-normalised one:
+
+| `w_order` | Reading |
+|---|---|
+| 1.0 | as damped as the least-damped mode of the reference room (R = 0.80) |
+| 2.13 | half as damped as that (the fundamental at R = 0.95) |
+
+The consequence is that **`GAMMA_REF_R` is versioning-relevant, not a tuning
+knob.** Changing it silently invalidates every `S_v5` recorded before the
+change — the numbers stay plausible and stop meaning the same thing. If it ever
+must move, treat it as a breaking change to the metric and re-baseline the
+research set alongside it.
+
+#### The reference sweep — the evidence a future change must keep reproducing
+
+4.42 × 3.34 × 2.40 m, all six walls swept together. Confirmed exact against the
+research code:
+
+| all six walls at R | 0.95 | 0.90 | 0.80 | 0.70 | 0.60 | 0.40 |
+|---|---|---|---|---|---|---|
+| `f_s` (Hz) | 314.51 | 225.30 | 163.68 | 137.52 | 122.76 | 107.15 |
+| `S_v5` | 0.010601 | 0.010484 | 0.006904 | 0.004414 | 0.002957 | 0.001465 |
+| tail fraction > 150 Hz | 0.6325 | 0.6046 | 0.5657 | 0.5397 | 0.5216 | 0.4991 |
+
+The tail column is not decoration: it is the evidence that **curve and score now
+agree in direction.** Adding absorption must retract the tail *and* lower the
+score. If a future change makes those two columns disagree, the V1.4.0
+contradiction has been reintroduced.
+
+#### Why the sweep is monotonic but strongly non-uniform — DO NOT "fix" the flat top
+
+The steps are wildly uneven: 0.95 → 0.90 moves the score **1.1 %**, while
+0.90 → 0.80 moves it **34 %**. Read cold this looks like a clamp or a saturating
+term, and someone will try to remove it. It is real model behaviour — the
+research code produces the same shape.
+
+**The cause is the `1/N` normalisation interacting with the `3·f_s` enumeration
+ceiling — NOT saturation of γ.** As `R → 1`, `f_s` climbs steeply, the score's
+enumeration ceiling `3·f_s` climbs with it, and `N` grows roughly as the cube of
+that ceiling. The pair sum grows too, and near R = 0.95 the two nearly cancel:
+
+| R | `f_s` | ceiling `3·f_s` | `N` | pair sum | `S_v5` = sum / N |
+|---|---|---|---|---|---|
+| 0.95 | 314.5 | 944 Hz | 3505 | 37.156 | 0.010601 |
+| 0.90 | 225.3 | 676 Hz | 1350 | 14.153 | 0.010484 |
+| 0.80 | 163.7 | 491 Hz | 549 | 3.790 | 0.006904 |
+
+Between R = 0.95 and 0.90 the pair sum falls 2.6× and `N` falls 2.6× — hence the
+1.1 % net. **`w_order` does not saturate anywhere in the swept range**: isolate
+it (freeze the mode set and the roll-off at R = 0.80 and vary only `R`) and the
+0.95 → 0.90 step is −32.2 %, squarely in line with every other step (−29 % to
+−44 %). γ *would* eventually collapse onto its floor `GAMMA_BASE + s·(n²)` as
+`R → 1`, but at R = 0.95 the `GAMMA_SCALE·(1−R_eff)` term is still 2.0 against a
+`GAMMA_BASE` of 3.0 — comparable, not vanished. Saturation does not bite below
+about R = 0.99.
+
+**What this means for a would-be fixer:** the flat top is produced by two
+load-bearing choices — the `1/N` division and the `3·f_s` ceiling — both of
+which are required for exact agreement with the research code (see 2.13's
+pinned-constants rule and A.6's dual-ceiling split). Flattening or steepening
+that region means changing one of them, which breaks the reference point.
+Don't.
+
 The one that will look like a bug and is not: **the scatter term `s` is pinned
 at 0.30 and deliberately ignores the Room Scatter slider.** That slider defaults
 to `0.0`, so reading it would silently delete the γ order penalty in the default
@@ -390,7 +456,37 @@ oblique, i.e. ratios 1 : 0.5 : 0.25 exactly. The naive model was implicitly
 weighting each mode by the energy it holds. That is the physical justification
 for weights that otherwise look arbitrary, and it explains why the model holds
 up in small rooms: there neither the roll-off nor the order penalty bites, so
-energy weighting is the whole story.
+energy weighting is the whole story. (The same note lives in `hazard.py`'s
+pinned-weights block, at the definition site.)
+
+**What that predicts — and it is falsifiable.** The Λ derivation makes Original
+a *legitimate baseline*, not a strawman: it is the energy-weighted answer, which
+is the correct answer wherever energy weighting is the only physics in play. It
+follows that Original should degrade **specifically in large rooms**, where the
+roll-off and the order penalty carry physics that energy weighting alone cannot
+see — modal overlap crowding the spectrum, and high-order modes decaying faster.
+If a future comparison finds Original degrading in *small* rooms instead, or
+degrading uniformly with room size, the Λ justification is wrong and this
+subsection needs revisiting.
+
+#### Known design tension — the curve shows shape, the score holds the level
+
+The curve is **peak-normalized**, so it displays *shape only*: the absolute
+level now lives exclusively in the score. This is precisely why the V1.4.0
+`GAMMA_MIN` contradiction was easy to miss — **the curve structurally cannot
+show the quantity that was moving the wrong way.** Any future change to the
+scoring should be checked against the score directly, never inferred from how
+the overlay looks.
+
+> **Option (not implemented):** divide `D(f)` by a fixed constant — the
+> reference room's peak value — instead of by each render's in-band maximum.
+> The shape of any single room's curve is unchanged (constant factor); 1.0
+> becomes a readable baseline that reflective rooms exceed visibly; and the
+> normalization factor stops depending on the display window, which would
+> dissolve the `peak_value` question in section 16 entirely.
+> **Costs:** y-axis autoscaling, and one more version-relevant constant
+> alongside `GAMMA_REF_R`.
+> **Deferred pending observation on the real display. Do not implement.**
 
 
 ---
@@ -788,7 +884,17 @@ peak-normalization factor **jump discontinuously**.
 
 The author is watching for this on the real display. **Leave it as is for now.**
 If it shows up, the fix is one of: relabel the read-out to `peak (in band)`, or
-redefine the normalization explicitly as the in-band maximum.
+redefine the normalization explicitly as the in-band maximum. (A third route —
+normalising against a fixed reference constant — would dissolve the question
+entirely; see the design-tension note in 2.13. Also deferred.)
+
+### Pending test/tooling work (V1.4.0) — none to be implemented without a brief
+
+| Item | What it is | Why it is worth doing |
+|---|---|---|
+| **Property tests, not just golden values** | Assert that `S_v5` is strictly decreasing in `R` across the six-wall sweep, and that the four-geometry ordering is identical at R = 0.80 and R = 0.60 | The frozen reference point catches drift. These catch the *specific* bug that cost a full round: a change that keeps the reference point exact while reversing the direction off-reference. The live-`GAMMA_MIN` bug passed every golden-value check |
+| **Headless 3D smoke test** | Build the figure under the Agg backend and write a PNG | It will not tell us whether the view looks *right*, but it will tell us it does not throw — which is most of what "un-exercised" currently costs us |
+| **Instrumentation to settle `peak_value` without a display** | Compute `D(f)` over a wider band (20–500 Hz), compare its `argmax` against the in-band `argmax`, and flag when they differ or when the in-band peak lands within a bin or two of 250 Hz. Sweep the dimension sliders programmatically across the plausible geometry range and see whether the flag ever fires | If it never fires, the concern is theoretical and we relabel. If it fires, we get the exact geometry that triggers it — which is far better than waiting to notice a discontinuity by eye |
 
 ---
 
@@ -813,11 +919,21 @@ accumulation, not just the score. Two follow-up fixes then landed: `GAMMA_MIN`
 pinned at its reference value (it had been recomputed live, which inverted how
 the score responds to absorption), and the `f_s` guard narrowed to v5 only.
 
-**The next session should:**
+**This session is officially closed.** The next session should:
+
 1. Read this document and `CHANGELOG.md` first.
-2. Read 2.13 before touching `hazard.py`. Three things in it look like bugs and
-   are not: the pinned scatter term, the pinned `GAMMA_MIN`, and the wall
-   sliders being inert in Original mode.
+2. **Read 2.13 before touching `hazard.py`.** Four things in it look like bugs
+   and are not — this is the highest-value paragraph in the document:
+   - the pinned scatter term (ignores the Room Scatter slider),
+   - the pinned `GAMMA_MIN` (and `GAMMA_REF_R` being versioning-relevant),
+   - the wall sliders being inert in Original mode,
+   - the flat top of the absorption sweep between R = 0.95 and R = 0.90.
 3. Note the `peak_value` watch item in section 16 — pending observation on the
    real display, not to be changed pre-emptively.
-4. Do NOT start either V1.4.x follow-up without a fresh brief.
+4. Do NOT start either V1.4.x follow-up, the deferred fixed-constant
+   normalisation (2.13), or any section 16 pending item without a fresh brief.
+
+**Still un-exercised:** the 3D view. Nothing in V1.4.0 touches `render.py`,
+`physics.py` or the 3D pipeline — verified by diff across all eight commits —
+but the app has not been launched end to end in this work. The headless 3D smoke
+test in section 16 exists to shrink that gap.

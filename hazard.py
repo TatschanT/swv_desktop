@@ -75,6 +75,13 @@ SIGMA_REF = 3.0           # collision width [Hz] at F_REF
 F_REF = 100.0             # reference frequency [Hz] for the width law
 SIGMA_MIN = 0.3           # floor on the collision width [Hz]
 SCATTER = 0.30            # s -- order penalty in gamma; NOT the UI slider value
+# VERSIONING-RELEVANT, NOT A TUNING KNOB. GAMMA_REF_R defines the reference
+# point of the entire v5 score: w_order = GAMMA_MIN / gamma(n) is dimensionless
+# and referenced to it, so 1.0 reads "as damped as the least-damped mode of the
+# reference room" and 2.13 reads "half as damped". Changing this value silently
+# invalidates every S_v5 recorded before the change -- the numbers stay
+# plausible and stop meaning the same thing. Treat any move as a breaking change
+# to the metric and re-baseline the research set alongside it.
 GAMMA_REF_R = 0.80        # reflection coefficient GAMMA_MIN is evaluated at
 
 # The order penalty's reference damping, evaluated ONCE at GAMMA_REF_R for the

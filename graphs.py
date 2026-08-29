@@ -205,8 +205,14 @@ class Plot2DWidget(FigureCanvasQTAgg):
         # to be re-asserted here, not just once at construction.
         self.ax_hazard.yaxis.set_ticks_position("right")
         self.ax_hazard.yaxis.set_label_position("right")
+        # Wording is deliberate on two counts: "relative" so the axis is never
+        # read as an absolute quantity, and "this room's peak" because the
+        # normalization reference is each render's own in-band maximum -- not a
+        # fixed baseline. If the deferred fixed-constant normalization in
+        # SESSION_HANDOFF 2.13 is ever adopted, this label must change with it.
         self.ax_hazard.set_ylabel(
-            "Hazard (rel. to this room's worst)", color=HAZARD_COLOR, fontsize=7)
+            "Hazard (relative, this room's peak = 1)",
+            color=HAZARD_COLOR, fontsize=7)
         self.ax_hazard.tick_params(axis="y", colors=HAZARD_COLOR, labelsize=6)
         self.ax_hazard.set_facecolor("none")
         for spine in self.ax_hazard.spines.values():
