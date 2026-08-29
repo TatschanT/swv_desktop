@@ -11,6 +11,9 @@ diverge from the others:
   * equipment colors - shared by the 3D (``render``) and 2D (``graphs``) views.
   * ``WALL_NAMES`` - the six wall identifiers used by the UI sliders, the
                      physics absorption map and the CSV import/export.
+  * ``HazardMode`` - Modal Collision Hazard model tokens, produced by the
+                     ``main`` combo box, dispatched on by ``hazard`` and echoed
+                     back in ``HazardResult.mode`` for the ``graphs`` annotation.
 """
 
 
@@ -20,6 +23,23 @@ class CorrMode:
     UNCORRELATED = "Uncorrelated"
     GLOBAL_CANCEL = "Global Cancel"
     TRUE_COMPLEX = "True Complex Field"
+
+
+class HazardMode:
+    """Modal Collision Hazard model selection.
+
+    ``OFF`` is the default: no overlay is computed and the 2D plot is drawn
+    exactly as it was before the feature existed.
+
+    ``ORIGINAL`` and ``V5`` are two DIFFERENT scoring models, not two
+    resolutions of one. Their scalar scores are NOT comparable to each other
+    (different weighting; only v5 divides by the mode count), so any display of
+    a score MUST carry the model name -- see ``hazard.py`` and the annotation in
+    ``graphs.update_freq_response``.
+    """
+    OFF = "off"
+    ORIGINAL = "original"
+    V5 = "v5"
 
 
 # Equipment marker colors (shared by render.py and graphs.py).
