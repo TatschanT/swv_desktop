@@ -39,6 +39,15 @@ Their scalar scores are NOT comparable to each other (different weighting, and
 only v5 divides by the mode count). Never render them side by side without the
 model name attached.
 
+**The original model ignores wall reflections entirely.** Its mode set is fixed
+by index caps, its collision width is constant, and it has no roll-off and no
+order penalty -- so nothing in it reads ``Rx/Ry/Rz`` or ``f_s``. The six wall
+sliders being inert while it is selected is CORRECT BEHAVIOUR, not a bug: the
+model is a statement about room proportions alone. Do not "fix" it by feeding
+absorption in; that would make it the v5 model with fewer modes. For the same
+reason it renders normally in a fully reflective room, where v5 correctly
+renders nothing.
+
 CALIBRATED CONSTANTS
 --------------------
 Every constant in the "pinned" block below was calibrated against research data
@@ -66,10 +75,42 @@ SIGMA_REF = 3.0           # collision width [Hz] at F_REF
 F_REF = 100.0             # reference frequency [Hz] for the width law
 SIGMA_MIN = 0.3           # floor on the collision width [Hz]
 SCATTER = 0.30            # s -- order penalty in gamma; NOT the UI slider value
+GAMMA_REF_R = 0.80        # reflection coefficient GAMMA_MIN is evaluated at
 
-# Mode A ("original") per-class weights. Numerically identical to
-# physics.MODAL_NORMS, but recomputed here because that helper is scalar-only
-# and this module is vectorised throughout.
+# The order penalty's reference damping, evaluated ONCE at GAMMA_REF_R for the
+# fundamental. This is a pinned constant (== 11.3), NOT a per-room quantity.
+#
+# Recomputing it from the live reflections would renormalize every room so that
+# its own least-damped mode scores exactly w_order = 1.0, which throws away the
+# absolute damping level: as absorption rises the constant GAMMA_SCALE term
+# comes to dominate gamma, the relative spread across mode orders collapses,
+# high-order modes stop being penalized, more modes carry weight, and the score
+# gets WORSE while the roll-off tail (correctly) retracts. The overlay would
+# contradict itself -- curve says "better", number says "worse".
+#
+# Ranking is unaffected either way: GAMMA_MIN depends only on R and never on
+# geometry, so at any fixed wall setting the two variants differ by a global
+# scalar and order rooms identically. Only the cross-absorption behaviour
+# changes -- which is precisely the behaviour the overlay is read for.
+GAMMA_MIN = (app_config.PhysicalConfig.GAMMA_BASE
+             + app_config.PhysicalConfig.GAMMA_SCALE * (1.0 - GAMMA_REF_R)
+             + SCATTER * 1.0)
+
+# Mode A ("original") per-class weights. Recomputed here rather than taken from
+# physics.get_modal_norm because that helper is scalar-only and this module is
+# vectorised throughout.
+#
+# Their coincidence with physics.MODAL_NORMS is NOT numerology. The modal
+# normalization constant of the wave equation is
+#
+#     Lambda = (1/2) ** (number of non-zero indices)
+#
+# i.e. 1/2 axial, 1/4 tangential, 1/8 oblique -- ratios 1 : 0.5 : 0.25, exactly
+# the weights below. The naive model was implicitly weighting each mode by the
+# ENERGY IT HOLDS. That is a real physical justification for weights that
+# otherwise look arbitrary, and it explains why the naive model holds up in
+# small rooms: there neither the roll-off nor the order penalty bites, so energy
+# weighting is the whole story.
 W_AXIAL = 1.0
 W_TANGENTIAL = 0.5
 W_OBLIQUE = 0.25
@@ -206,18 +247,28 @@ def _axis_weight(nx, ny, nz, lx: float, ly: float, lz: float) -> np.ndarray:
 
 
 def _order_weight(nx, ny, nz, rx: float, ry: float, rz: float) -> np.ndarray:
-    """Order penalty ``gamma_min / gamma(n)``, using the project's own damping
+    """Order penalty ``GAMMA_MIN / gamma(n)``, using the project's own damping
     model.
 
-    Identical IN FORM to ``physics.calc_gamma`` -- keep it that way. It is
-    re-derived here rather than called because ``calc_gamma`` is scalar-only and
-    takes a ``RoomConfig``; only ``GAMMA_BASE`` / ``GAMMA_SCALE`` are borrowed.
+    ``gamma(n)`` is identical IN FORM to ``physics.calc_gamma`` -- keep it that
+    way. It is re-derived here rather than called because ``calc_gamma`` is
+    scalar-only and takes a ``RoomConfig``; only ``GAMMA_BASE`` /
+    ``GAMMA_SCALE`` are borrowed.
 
-        R_eff   = (nx*Rx + ny*Ry + nz*Rz) / (nx + ny + nz)
-        gamma   = GAMMA_BASE + GAMMA_SCALE * (1 - R_eff) + s * (nx^2+ny^2+nz^2)
-        gamma_min = GAMMA_BASE + GAMMA_SCALE * (1 - max(Rx,Ry,Rz)) + s * 1
+        R_eff = (nx*Rx + ny*Ry + nz*Rz) / (nx + ny + nz)
+        gamma = GAMMA_BASE + GAMMA_SCALE * (1 - R_eff) + s * (nx^2+ny^2+nz^2)
 
     ``s`` is SCATTER, pinned at 0.30 -- NOT the UI's Room Scatter slider.
+
+    The numerator is the PINNED ``GAMMA_MIN``, evaluated once at
+    ``GAMMA_REF_R``; ``rx, ry, rz`` are live and feed only ``R_eff`` inside
+    ``gamma(n)``. See GAMMA_MIN's own comment for why re-deriving the numerator
+    per room inverts how the score responds to absorption.
+
+    A room more reflective than the reference therefore yields ``w_order > 1``
+    (2.13 for the fundamental at R = 0.95). That is correct and means exactly
+    "less damped than the reference room" -- do NOT clamp it. The curve is
+    peak-normalized downstream, so nothing overflows.
     """
     p = app_config.PhysicalConfig
     n_sum = nx + ny + nz          # >= 1: (0,0,0) is never in the mode set
@@ -225,9 +276,7 @@ def _order_weight(nx, ny, nz, rx: float, ry: float, rz: float) -> np.ndarray:
 
     gamma = (p.GAMMA_BASE + p.GAMMA_SCALE * (1.0 - r_eff)
              + SCATTER * (nx ** 2 + ny ** 2 + nz ** 2))
-    gamma_min = (p.GAMMA_BASE + p.GAMMA_SCALE * (1.0 - max(rx, ry, rz))
-                 + SCATTER * 1.0)
-    return gamma_min / gamma
+    return GAMMA_MIN / gamma
 
 
 def _rolloff(freqs: np.ndarray, f_s: float) -> np.ndarray:
@@ -353,10 +402,10 @@ def compute(mode: str, lx: float, ly: float, lz: float,
     """
     f_s = physics.schroeder_frequency(lx, ly, lz, wall_reflections)
 
-    # Guard BOTH models on f_s, not just v5: f_s is reported in the overlay
-    # annotation, and a room with no absorption at all has no meaningful modal
-    # region to report a hazard for.
-    if f_s <= 0.0 or lx <= 0.0 or ly <= 0.0 or lz <= 0.0:
+    # Non-positive dimensions are degenerate for BOTH models -- there are no
+    # modes to enumerate. The f_s guard is v5-ONLY and lives in its branch
+    # below: the original model never divides by f_s.
+    if lx <= 0.0 or ly <= 0.0 or lz <= 0.0:
         return _empty(mode, f_s)
 
     f_grid = _f_grid()
@@ -371,6 +420,12 @@ def compute(mode: str, lx: float, ly: float, lz: float,
         curve = _pair_curve(f_grid, freqs, weights, sigma_pair)
 
     elif mode == constants.HazardMode.V5:
+        # v5 ONLY: the Schroeder roll-off divides by f_s, and a fully
+        # reflective room (absorption -> 0) has no modal region for the model
+        # to describe. Render nothing rather than propagate NaN/inf.
+        if f_s <= 0.0:
+            return _empty(mode, f_s)
+
         def prepare(f_max):
             f, nx, ny, nz = _enumerate_modes(lx, ly, lz, f_max)
             w = (_axis_weight(nx, ny, nz, lx, ly, lz)

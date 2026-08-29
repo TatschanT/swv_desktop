@@ -219,9 +219,13 @@ class Plot2DWidget(FigureCanvasQTAgg):
         # information lost to peak-normalizing is preserved.
         label = "v5  " if result.mode == constants.HazardMode.V5 else "orig"
         score = f"{result.score:.4f}" if abs(result.score) < 1.0 else f"{result.score:.1f}"
+        # A fully reflective room has no defined Schroeder frequency. Only the
+        # original model reaches here in that state (it does not use f_s at
+        # all); the dash matches main.py's "Est. Schroeder: —" convention.
+        fs = f"{result.f_s:.0f} Hz" if result.f_s > 0.0 else "—"
         self.ax_hazard.text(
             *HAZARD_ANNOT_XY,
-            f"{label} score {score} │ f_s {result.f_s:.0f} Hz │ "
+            f"{label} score {score} │ f_s {fs} │ "
             f"peak {result.peak_value:.2f} @ {result.peak_freq:.0f} Hz",
             transform=self.ax_freq.transAxes,
             color=HAZARD_COLOR, fontsize=6.5, family="monospace",
