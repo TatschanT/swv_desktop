@@ -378,6 +378,46 @@ change — the numbers stay plausible and stop meaning the same thing. If it eve
 must move, treat it as a breaking change to the metric and re-baseline the
 research set alongside it.
 
+#### What the score is NOT — cross-room comparison (verified 2026-08-30)
+
+**"Reference room" above means a reference DAMPING LEVEL (R = 0.80), not a
+reference GEOMETRY.** These are trivially easy to conflate, and the distinction
+is the entire scope of the score. Pinning `GAMMA_MIN` bought exactly one thing:
+within **one** room, changing absorption now moves curve and number in the same
+direction. It bought **nothing** about comparing two different rooms.
+
+`S_v5` and `S_orig` are **not comparable between rooms of different size.**
+`D(f)` is scale-dependent by construction — `σ ∝ 1/f` while mode spacing
+`∝ 1/L` — so enlarging a room at constant proportions raises the score purely
+mechanically. Measured, all six walls at R = 0.80:
+
+| room | `S_v5` | `S_orig` |
+|---|---|---|
+| 4.42 × 3.34 × 2.40 m | 0.006904 | 1.4805 |
+| the SAME SHAPE × 1.5 | 0.019385 | 3.1143 |
+| the SAME SHAPE × 2.5 | 0.061392 | 7.0022 |
+
+**~8.9× "worse" for an acoustically identical geometry.** `graphs.py
+._draw_hazard` already states the mechanism in its docstring (~10× at 2.5×); the
+measurement above confirms it end-to-end through `compute()`.
+
+Two consequences that must not be lost:
+
+1. The CHANGELOG's *"four geometries, identical ordering at R = 0.80 and
+   R = 0.60"* verifies that **the pinned and live `GAMMA_MIN` variants rank
+   rooms identically** — it does NOT license comparing absolute scores across
+   sizes. Do not cite it as if it did.
+2. The displayed curve is peak-normalized per room (`curve / peak_value`, axis
+   label `"Hazard (relative, this room's peak = 1)"`), so the overlay is not
+   cross-room comparable either, by design.
+
+If cross-room comparison is ever wanted, that is the deferred fixed-constant
+normalization below — a metric change of the same weight class as moving
+`GAMMA_REF_R`, not a display tweak. **Do not slip it into an unrelated
+release.** Note also that any such change would invert the sign of a
+scale-invariance property test, so do not freeze today's scale dependence as an
+assertion in the meantime; record it as a baseline instead.
+
 #### The reference sweep — the evidence a future change must keep reproducing
 
 4.42 × 3.34 × 2.40 m, all six walls swept together. Confirmed exact against the

@@ -23,6 +23,24 @@ listening position, while the hazard curve describes the room's intrinsic
 disposition. The overlay earns its place precisely because the two curves can
 be compared and DISAGREE.
 
+The scalar score is likewise NOT an absolute grade, and NOT comparable between
+rooms of different SIZE. ``D(f)`` is scale-dependent by construction -- sigma
+goes as 1/f while mode spacing goes as 1/L -- so enlarging a room while keeping
+its proportions raises the score purely mechanically. Measured 2026-08-30, all
+six walls at R = 0.80:
+
+    4.42 x 3.34 x 2.40 m          S_v5 = 0.006904   S_orig = 1.4805
+    the SAME SHAPE scaled 1.5x    S_v5 = 0.019385   S_orig = 3.1143
+    the SAME SHAPE scaled 2.5x    S_v5 = 0.061392   S_orig = 7.0022
+
+Nine times "worse" for an acoustically identical geometry. The score is for
+comparing ONE room across wall treatments, where curve and number agree in
+direction; it has no fixed zero and no absolute good/bad threshold. The curve is
+peak-normalized per room in the view (see ``graphs.py._draw_hazard``), so the
+overlay answers "WHERE is this room weak", never "how weak next to that other
+room". A fixed normalization reference that would make cross-room comparison
+meaningful is deferred -- see SESSION_HANDOFF 2.13.
+
 Known blind spot (verified against a real room, Aug 2026): two close modes that
 share the same z-dependence produce a position-dependent null which this
 frequency-domain metric cannot see at all.
@@ -82,6 +100,13 @@ SCATTER = 0.30            # s -- order penalty in gamma; NOT the UI slider value
 # invalidates every S_v5 recorded before the change -- the numbers stay
 # plausible and stop meaning the same thing. Treat any move as a breaking change
 # to the metric and re-baseline the research set alongside it.
+#
+# READ THIS AS: a pinned reference DAMPING LEVEL, not a reference GEOMETRY. The
+# two are easy to conflate and the distinction is the whole scope of the score.
+# Pinning is what makes the score move in the RIGHT DIRECTION as absorption is
+# changed within ONE room. It does NOT make scores from rooms of different size
+# comparable -- they are not, by construction. See "WHAT THIS IS NOT" in the
+# module docstring for the measured scale dependence.
 GAMMA_REF_R = 0.80        # reflection coefficient GAMMA_MIN is evaluated at
 
 # The order penalty's reference damping, evaluated ONCE at GAMMA_REF_R for the

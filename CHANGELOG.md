@@ -147,8 +147,12 @@ the reference and are deliberately not clamped.
 **Room-to-room ranking is unaffected.** `GAMMA_MIN` depends only on `R`, never
 on geometry, so at any fixed wall setting the two variants differ by a global
 scalar and order rooms identically (verified: four geometries, identical
-ordering at R=0.80 and R=0.60). What changed is the **cross-absorption**
-behaviour — and it changed from wrong to right. Previously, adding absorption
+ordering at R=0.80 and R=0.60). Note this pins a reference **damping level**,
+not a reference **geometry**: `S_v5` is scale-dependent by construction, so
+scores from rooms of different size remain **not comparable** — the same room
+shape scaled 2.5× scores ~8.9× worse despite being acoustically identical
+(measured 2026-08-30; see SESSION_HANDOFF 2.13). What changed is the
+**cross-absorption** behaviour — and it changed from wrong to right. Previously, adding absorption
 made the score *worse* while the roll-off tail correctly retracted, so the
 overlay contradicted itself: the curve said "better", the number said "worse".
 
