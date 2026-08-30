@@ -15,8 +15,13 @@ a = Analysis(
     optimize=0,
 )
 pyz = PYZ(a.pure)
+# Splash image: deliberately named for its ROLE, not for its pixel width or the
+# version it was drawn for. The filename is baked into this argument, so a
+# dimension-bearing name (SWVtitle130.png) forced a spec edit every time the
+# artwork was replaced. Swap the PNG in place instead; PyInstaller's Splash()
+# requires PNG (not JPEG) and is supported on Windows and Linux only.
 splash = Splash(
-    'images\\SWVtitle130.png',
+    'images\\SWVsplashscreen.png',
     binaries=a.binaries,
     datas=a.datas,
     text_pos=None,

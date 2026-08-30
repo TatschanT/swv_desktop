@@ -1,0 +1,13 @@
+# Line endings are normalised to LF in the repository and checked out as LF on
+# every platform, Windows included. Without this file Git for Windows applies
+# its own core.autocrlf default, which can make an entire checkout show up as
+# modified on a build machine -- noise that a re-clone does NOT fix, because the
+# setting reproduces it. VS Code handles LF files on Windows natively.
+* text=auto eol=lf
+
+# Binary assets: never touched, never diffed as text.
+*.png binary
+*.ico binary
+*.jpg binary
+*.jpeg binary
+*.pdf binary
